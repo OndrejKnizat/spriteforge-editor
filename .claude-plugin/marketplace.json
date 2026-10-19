@@ -1,0 +1,12 @@
+{
+  "name": "spriteforge-editor",
+  "owner": { "name": "SpriteForge", "email": "support@spriteforge.tech" },
+  "description": "SpriteForge Editor: a free pixel editor and tileset editor inside Claude.",
+  "plugins": [
+    {
+      "name": "spriteforge-editor",
+      "source": "./",
+      "description": "SpriteForge's free pixel editor and tileset editor inside Claude: hand-edit sprites, animations and Wang tilesets right in the conversation - as interactive cards in Claude's chat apps and as panes in Claude Code. No account needed."
+    }
+  ]
+}
