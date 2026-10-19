@@ -89,9 +89,11 @@ the web and desktop), the editor appears right in the conversation under the `op
 user draws there, can switch to the full editor, and clicks **Done**, which sends you a message with
 the `session_id`. Elsewhere the user gets the edit link instead.
 
-- For the whole Edit studio in the conversation (layers, selection, shapes, mirror painting, frames
-  with onion skin), call `open_full_editor` with the `session_id` from `open_editor` or
-  `open_sprite_in_editor`; the compact card's **Open full editor** button asks you for exactly this.
+- When the user wants the whole Edit studio in the conversation (layers, selection, shapes, mirror
+  painting, frames with onion skin), call `open_full_editor` directly, with the same sources as
+  `open_editor` (`png_base64`, `art`, or a size) - don't open the compact editor first. For a sprite
+  that's already open, pass its `session_id` instead; the compact card's **Open full editor** button
+  asks you for exactly this.
 - For a tileset, call `open_tileset_editor` instead: SpriteForge's tileset window in the conversation
   (the user paints a small map to see the tiles chain, draws on the map or on single tiles, and edits
   the base texture, which re-derives every edge tile they haven't drawn on by hand). `kind` is `wang`
@@ -104,9 +106,9 @@ the `session_id`. Elsewhere the user gets the edit link instead.
 - `open_editor` opens a sprite and returns the edit link to share. Pass `png_base64` when you have the
   PNG's bytes, `art` when you're handing over pixel art you drafted (a palette of hex colours plus a
   grid of palette indexes, -1 for transparent), or only `width` and `height` for a blank canvas.
-- If the user has an image you can see but can't pass as bytes, open a blank canvas at its size and
-  tell them to choose **Open full editor** and drag their PNG onto that page - it imports into the same
-  link. (The inline card itself doesn't take dropped files.)
+- If the user has an image you can see but can't pass as bytes, open the full editor on a blank canvas
+  at its size (`open_full_editor` with `width` and `height`) and tell them to drag their PNG onto it -
+  it imports into the same link. (The compact card doesn't take dropped files.)
 - When they're done (or the card's Done message arrives), `get_sprite` with the `session_id` shows you
   the result and gives the PNG URL they can download. If they paste an edit link instead, pass that;
   the tool reads the id out of it.
@@ -118,8 +120,9 @@ If the signed-in **SpriteForge** connector is available, the user can keep what 
 - After editing, offer `save_to_library` with the `session_id` (it goes into their most recently used
   project unless they pick one with `project_id`; `list_projects` shows them).
 - To touch up a sprite that's already in their library, use `open_sprite_in_editor` with its
-  `asset_id` instead of `open_editor`, then `save_to_library` with the returned `session_id` when they're
-  done - that updates the library sprite and keeps the old version in its history.
+  `asset_id` instead of `open_editor` (or `open_full_editor` with the `asset_id` to open it straight in
+  the full editor), then `save_to_library` with the returned `session_id` when they're done - that
+  updates the library sprite and keeps the old version in its history.
 - Saving the same session again updates the sprite it created rather than making a copy.
 - The same connector can also generate sprites with AI on the user's credits - see the
   generate-sprites skill.

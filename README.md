@@ -26,6 +26,16 @@ a SpriteForge account).
   `~/.claude/settings.json` and restart the app.
 - **claude.ai:** add the connector `https://www.spriteforge.tech/mcp/editor` (Settings, Connectors).
 
+## Example prompts
+
+- "Draw a 16x16 health potion and open it in the SpriteForge editor so I can touch it up."
+- "Open a blank 32x32 canvas in the full SpriteForge editor - I want layers and animation frames."
+- "Make a 16px grass Wang tileset and open it in the tileset editor so I can paint a test map."
+- "Show that tileset as isometric terrain."
+- In Claude Code: "Open assets/hero.png in the pixel editor" (or `/spriteforge-draw assets/hero.png`), then
+  "Write my edits back to assets/hero.png" after **Save to prompt**.
+- "I'm done - show me the result and give me the PNG." (Claude reads the sprite back with `get_sprite`.)
+
 ## In Claude's chat apps
 
 Ask Claude to open a sprite, pixel art it drafted or a blank canvas in the editor. The **editor card**
@@ -146,6 +156,24 @@ In the editor:
 
 Limits: edit links take PNGs up to 128x128 pixels and 256 colours, the panes up to 64x64; pixels under
 50% opacity become transparent.
+
+## Troubleshooting
+
+- **No editor card appears:** cards show in Claude's chat apps (claude.ai on the web and the desktop
+  app's chat). Elsewhere, open the edit link Claude gives you. Check that the SpriteForge Editor
+  connector is turned on for the conversation, or name it in your request ("in the SpriteForge editor").
+- **"That edit session has expired":** edit links close 24 hours after the last edit. Ask Claude to open
+  the sprite again; if you still have the PNG, it starts a new link from it.
+- **"Too many new edit sessions right now":** the free connector is rate-limited. Wait a few minutes.
+- **The sprite is too big:** edit links and cards take up to 128x128 pixels and 256 colours, the Claude
+  Code panes 64x64. Crop or reduce the colours first.
+- **The panes don't open in Claude Code:** check that `/plugin` lists `spriteforge-editor` as enabled,
+  and update Claude Code - the panes are a plugin mod and need a recent version.
+- **Clicks land on the pixel next door in a terminal:** large sprites are drawn two pixels per
+  character, and exact clicks need a terminal that reports pixel positions (kitty, Ghostty, iTerm2,
+  WezTerm, foot). Or zoom in with `2`.
+- **Export wrote no file:** without a base64 decoder (`sh` with `base64`, or PowerShell) the pixels go
+  to your prompt, and Claude can write the file.
 
 ## Components
 
