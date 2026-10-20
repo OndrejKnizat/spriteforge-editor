@@ -4,7 +4,7 @@ import type { On } from 'claude-code'
 
 import { cellWidth, fit, pixelAt } from '../hooks/pixels'
 import { spriteFromPng } from '../hooks/png'
-import { spriteText } from '../hooks/register'
+import { WRITERS, spriteText } from '../hooks/register'
 import { hexHsv, hsvHex, shiftHex } from '../hooks/tools'
 
 const PLUGIN = 'spriteforge-editor'
@@ -55,7 +55,7 @@ function host(on: On, opts: { decoder?: boolean } = {}) {
   })
   on('process.run', (_$, e) => {
     runs.push(e.argv.slice())
-    const ok = opts.decoder !== false && e.argv[0] === 'sh'
+    const ok = opts.decoder !== false && e.argv[0] === WRITERS.sh
     if (ok) files.set(rel(e.init!.env!.SF_OUT!), bytesOf(e.init!.stdin!.trim()))
     return { value: { exitCode: ok ? 0 : 127, stdout: '', stderr: ok ? '' : 'not found', isStdoutTruncated: false, isStderrTruncated: false } }
   })
@@ -794,7 +794,7 @@ describe('pixel editor pane', () => {
     await ui.press({ key: 'tab-export' })
     await ui.press({ key: 'export-png' })
     expect(await status(/^Wrote art\/hero-2\.png\.$/)).toBeDefined()
-    expect(out.runs[0]!.slice(0, 2)).toEqual(['sh', '-c'])
+    expect(out.runs[0]!.slice(0, 2)).toEqual(['/bin/sh', '-c'])
     const one = spriteFromPng(out.files.get('art/hero-2.png') as Uint8Array, 64, 256)
     const letters = (s: typeof one) => Array.from({ length: s.h }, (_, y) => s.grid.slice(y * s.w, y * s.w + s.w).map((v) => (v < 0 ? '.' : 'ABCD'[['#6ea8fe', '#dcb684', '#17161d', '#c82828'].indexOf(s.palette[v]!)])).join(''))
     expect(letters(one)).toEqual(HERO_GRID)
@@ -831,7 +831,9 @@ describe('pixel editor pane', () => {
     await click(0, 0)
     await ui.press({ key: 'tab-export' })
     await ui.press({ key: 'export-png8' })
-    expect(out.runs.map((r) => r[0])).toEqual(['sh', 'powershell', 'pwsh'])
+    // Full paths only: a bare name could run a same-named program from the project folder.
+    expect(out.runs.map((r) => r[0])).toEqual([WRITERS.sh, WRITERS.powershell, WRITERS.pwsh])
+    expect(Object.values(WRITERS).every((p) => p.startsWith('/') || /^[A-Z]:\\/.test(p))).toBe(true)
     expect(await status(/Couldn't write sprite@8x\.png here \(no base64 tool\)/)).toBeDefined()
     expect(out[0]!.text).toBe('Write "sprite" to sprite@8x.png as a PNG at 8x (nearest neighbour):\n\nGRID\nA.\n\nPALETTE\nA=#ff004d\n')
   })

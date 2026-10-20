@@ -147,8 +147,8 @@ In the editor:
   `hooks/`.
 - **Edit links and the chat cards** upload the sprite you edit (its pixels, palette and a name) to
   spriteforge.tech, where it is stored under an unguessable edit link. Anyone holding the link can view
-  and edit that sprite. Edit links aren't tied to an account and are deleted 24 hours after the last
-  edit, and never kept more than 7 days.
+  and edit that sprite. Edit links aren't tied to an account. A link stops working 24 hours after the
+  last edit (7 days after it was created at most), and its sprite is deleted within a day after that.
 - In Claude Code the upload and download are plain `curl` requests to
   `https://www.spriteforge.tech/api/edit-session`. The connector, `https://www.spriteforge.tech/mcp/editor`,
   creates and reads edit links the same way. The cards are self-contained and load nothing from other

@@ -1,7 +1,7 @@
 {
   "name": "spriteforge-editor",
   "displayName": "SpriteForge Editor",
-  "version": "0.6.3",
+  "version": "0.6.4",
   "description": "SpriteForge's free pixel editor and tileset editor inside Claude: hand-edit sprites, animations and Wang tilesets right in the conversation - as interactive cards in Claude's chat apps and as panes in Claude Code. No account needed.",
   "author": { "name": "SpriteForge", "email": "support@spriteforge.tech", "url": "https://www.spriteforge.tech" },
   "homepage": "https://www.spriteforge.tech",

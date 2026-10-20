@@ -55,11 +55,13 @@ yet - say so rather than shrinking them.
 1. Upload the file. Don't paste base64 into a tool call; let curl send the bytes:
 
    ```bash
-   curl -sS --data-binary @"assets/hero.png" -H 'Content-Type: image/png' \
+   curl -sS --data-binary @'assets/hero.png' -H 'Content-Type: image/png' \
      'https://www.spriteforge.tech/api/edit-session?name=hero'
    ```
 
-   The JSON response carries `id`, `editUrl` and `pngUrl`. Name the session after the file.
+   The JSON response carries `id`, `editUrl` and `pngUrl`. Name the session after the file, using
+   only letters, digits, `-` and `_` in `name=`. Keep file paths in single quotes as shown, so a file
+   name with `$`, backticks or spaces stays literal (write a single quote inside one as `'\''`).
 
 2. Give the user the `editUrl` and ask them to tell you when they're done. Open it in their browser
    (`open` on macOS, `xdg-open` on Linux) only if they ask; on a remote or cloud machine, just share
@@ -73,7 +75,7 @@ yet - say so rather than shrinking them.
    under version control, copy it to a backup first and say where.
 
    ```bash
-   curl -sS -f -o "assets/hero.png.new" '<pngUrl>' && mv "assets/hero.png.new" "assets/hero.png"
+   curl -sS -f -o 'assets/hero.png.new' '<pngUrl>' && mv 'assets/hero.png.new' 'assets/hero.png'
    ```
 
    Download to a temporary name and move it into place only on success, so an expired link or a
@@ -101,8 +103,13 @@ the `session_id`. Elsewhere the user gets the edit link instead.
   `platformer` (49 tiles). Give `base` (one seamless texture grid; the 16 Wang tiles are derived from
   it as SpriteForge does), `tiles` (every tile, in mask order: tile i is drawn where the map cells at
   its corners are painted, NW=1 NE=2 SW=4 SE=8, so 15 is the solid base), `png_base64` (a sheet, a
-  strip or a square texture), or only `size` for a blank set. `get_sprite` on its `session_id` shows the
-  set as one sheet; its edit link opens the same window on spriteforge.tech.
+  strip or a square texture; pass `layout` - `sheet`, `strip` or `texture` - when you know which, since
+  a square PNG is otherwise guessed from its tiles), or only `size` for a blank set. `get_sprite` on its
+  `session_id` shows the set as one sheet; its edit link opens the same window on spriteforge.tech.
+- To show a set that's already open in another view ("show that tileset as isometric terrain"), call
+  `open_tileset_editor` with its `session_id` and `kind` (`wang` flat, `wall` or `iso`) - not its tiles
+  again: the set and the user's edits stay, the view is saved with it, and the result says which view
+  it opened. A Wang set can't be shown as a platformer set, or the other way round.
 - `open_editor` opens a sprite and returns the edit link to share. Pass `png_base64` when you have the
   PNG's bytes, `art` when you're handing over pixel art you drafted (a palette of hex colours plus a
   grid of palette indexes, -1 for transparent), or only `width` and `height` for a blank canvas.

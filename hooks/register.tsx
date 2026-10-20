@@ -201,14 +201,26 @@ const FORMATS: Record<string, string> = {
 }
 
 // Binary files go through the system's base64 decoder (a mod writes only text): sh on macOS and
-// Linux, PowerShell on Windows. False when none of them wrote it whole.
+// Linux, PowerShell on Windows. Each by its full path, with a fixed PATH for sh: a bare name could
+// run a same-named program from the project folder (Windows looks in the working directory first).
+// False when none of them wrote it whole.
+export const WRITERS = {
+  sh: '/bin/sh',
+  powershell: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
+  pwsh: 'C:\\Program Files\\PowerShell\\7\\pwsh.exe',
+}
 async function writeBytes($: EngineInterface, path: string, bytes: Uint8Array): Promise<boolean> {
   const ps = '[IO.File]::WriteAllBytes($env:SF_OUT, [Convert]::FromBase64String([Console]::In.ReadToEnd()))'
-  const writers = [['sh', '-c', 'base64 --decode > "$SF_OUT"'], ['powershell', '-NoProfile', '-NonInteractive', '-Command', ps], ['pwsh', '-NoProfile', '-NonInteractive', '-Command', ps]]
+  const writers = [
+    [WRITERS.sh, '-c', 'base64 --decode > "$SF_OUT"'],
+    [WRITERS.powershell, '-NoProfile', '-NonInteractive', '-Command', ps],
+    [WRITERS.pwsh, '-NoProfile', '-NonInteractive', '-Command', ps],
+  ]
   const stdin = base64(bytes)
   for (const argv of writers) {
     try {
-      const r = await $.process.run(argv, { stdin, env: { SF_OUT: path }, timeoutMs: 30_000 })
+      const env: Record<string, string> = argv[0] === WRITERS.sh ? { SF_OUT: path, PATH: '/usr/bin:/bin' } : { SF_OUT: path }
+      const r = await $.process.run(argv, { stdin, env, timeoutMs: 30_000 })
       if (r.exitCode !== 0) continue
       const st = await $.fs.stat(path)
       if (st.kind === 'file' && st.size === bytes.length) return true
