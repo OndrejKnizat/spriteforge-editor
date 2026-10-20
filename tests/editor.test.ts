@@ -490,6 +490,7 @@ describe('pixel editor pane', () => {
     await $.tool.call({ tool: TOOL, palette: ['#ff0000', '#00ff00', '#0000ff', '#fe0000'], grid: [[0, 1, 2, 3]], name: 'reds' })
     const { ui, status } = await editor($, 'terminal', 4)
     await ui.press({ key: 'c1' })
+    await ui.press({ key: 'col-more' }) // More holds the palette's own tools and the HSV steps
     await ui.press({ key: 'pal-remove' })
     expect(await status(/Removed #00ff00 and cleared its pixels/)).toBeDefined()
     await ui.press({ key: 'pal-sort' }) // #0000ff, #fe0000, #ff0000
@@ -723,6 +724,49 @@ describe('pixel editor pane', () => {
       await ui.press({ key: 'picker' })
       expect(await ui.find({ in: 'editor', type: 'Text', text: '◆' })).toBeUndefined()
       await ui.press({ key: 'picker' })
+      await ui.unmount()
+    }
+  })
+
+  test('palette chips take a press anywhere on them: left sets the foreground, right the background', async ($, on) => {
+    host(on)
+    await run($, '4x3')
+    for (const surface of SURFACES) {
+      const { ui } = await editor($, surface, 4)
+      const label = async (key: string) => (await ui.find({ in: 'editor', key }))!.text
+      const press = async (x: number, y: number, button: 'left' | 'right' = 'left') => {
+        await ui.pointer({ type: 'down', x, y, button, in: 'editor' })
+        await ui.pointer({ type: 'up', x, y, button, in: 'editor' })
+      }
+      // 12 canvas rows, the picker on rows 13-22, then a gap: the palette from row 24, 11 chips of 7
+      // columns a row in 78 columns, each 2 columns of colour then its number.
+      const pal = 24
+      await press(8 * 7, pal) // chip 9's colour, not its number
+      expect(await label('target-fg')).toContain('#ff004d')
+      await press(1, pal + 1, 'right') // chip 12, on the second row
+      expect(await label('target-bg')).toContain('#00e436')
+      expect(await label('target-fg')).toContain('#ff004d')
+      await press(8 * 7 + 6, pal) // the gap after a chip is still that chip's
+      expect(await label('target-fg')).toContain('#ff004d')
+      // With the picker hidden the palette sits one row under the canvas.
+      await ui.press({ key: 'picker' })
+      await press(0, 13)
+      expect(await label('target-fg')).toContain('#000000')
+      await ui.press({ key: 'picker' })
+      await ui.unmount()
+    }
+  })
+
+  test('a busy 64x64 sprite with 64 colours stays inside the drawing limit with the picker and chips', async ($, on) => {
+    host(on)
+    const palette = Array.from({ length: 64 }, (_, i) => '#' + ((i * 2654435761) % 16777216).toString(16).padStart(6, '0'))
+    const grid = Array.from({ length: 64 }, (_, y) => Array.from({ length: 64 }, (_, x) => (x * 7 + y * 13) % 64))
+    await $.tool.call({ tool: TOOL, palette, grid, name: 'busy' })
+    for (const surface of SURFACES) {
+      const ui = await $.ui.mount({ plugin: PLUGIN, surface, component: 'Pane', requestId: PANE, props: pane(120, 60), viewport: { columns: 120, rows: 60 } })
+      await ui.resize({ columns: 118, rows: 50, in: 'editor' })
+      expect(await ui.find({ in: 'editor', key: 'c63' })).toBeDefined()
+      expect(await ui.find({ in: 'editor', type: 'Text', text: '◆' })).toBeDefined()
       await ui.unmount()
     }
   })

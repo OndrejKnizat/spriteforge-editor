@@ -33,7 +33,7 @@ nothing anywhere.
   i drawn where the map cells at its corners are painted, NW=1 NE=2 SW=4 SE=8) or `palette` + `base`,
   or `size`. A platformer set: `path` to its 7x7 sheet, `palette` + `tiles` (49 grids in SpriteForge's
   order), or `size` for a blank one.
-- Both return at once. When the user clicks **Save to prompt**, the result arrives in their next message
+- Both return at once. When the user clicks **Send to Claude**, the result arrives in their next message
   as a GRID + PALETTE block (one letter per pixel, "." transparent; an animation also lists its frame
   times and tags); write it back to the file if they ask (PNG encoding is up to you - a short script
   with your usual tools). A message starting "Write ... as ..." is an export the pane couldn't write

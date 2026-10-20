@@ -33,7 +33,7 @@ a SpriteForge account).
 - "Make a 16px grass Wang tileset and open it in the tileset editor so I can paint a test map."
 - "Show that tileset as isometric terrain."
 - In Claude Code: "Open assets/hero.png in the pixel editor" (or `/spriteforge-draw assets/hero.png`), then
-  "Write my edits back to assets/hero.png" after **Save to prompt**.
+  "Write my edits back to assets/hero.png" after **Send to Claude**.
 - "I'm done - show me the result and give me the PNG." (Claude reads the sprite back with `get_sprite`.)
 
 ## In Claude's chat apps
@@ -78,10 +78,11 @@ shortcut:
   nudge, Enter sets them down. Copy, Cut, Paste, Delete, Deselect (Ctrl+C, X, V, Delete, Ctrl+D),
   Ctrl+A, **Crop**, **To brush** (Ctrl+B: the selection becomes a custom brush), **Flip** and **Rotate
   90°** (Shift+H, Shift+V), on the selection or the current layer. **Move** (V) slides the layer.
-- **Colour:** foreground and background (X swaps), the **Picker** (a saturation and brightness square
-  over a hue strip, under the canvas; click or drag), a hex field and hue / saturation / value steps;
-  palette **Add**, **Remove** (its pixels clear), **Sort** by brightness, **DB32**, **Reduce to** N
-  colours (Keep or Revert), and **Edit swatch** to recolour every pixel of a swatch at once.
+- **Colour:** foreground and background (X swaps; right-click a palette chip for the background), the
+  **Picker** (a saturation and brightness square over a hue strip, under the canvas; click or drag), a
+  hex field and **Add to palette**. **More** holds the rest: hue / saturation / brightness steps,
+  **Remove swatch** (its pixels clear), **Edit swatch** to recolour every pixel of a swatch at once,
+  **Sort** by brightness, the **DB32 palette** and **Reduce to** N colours (Keep or Revert).
 - **Canvas:** resize without scaling (anchored at any corner, side or the middle, or around the art),
   **Resample**, **Trim**, **Crop to selection**, **Outline** (dark-tinted, black or white),
   **Strip outline**, **Remove BG**, **Offset ½**, **Tidy** (fills pin-holes), **Tile 3x3** to check a
@@ -98,7 +99,7 @@ shortcut:
 - Ctrl+Z / Ctrl+Shift+Z undo and redo; `+` `-` `0` and `1`-`5` zoom; Up and Down scroll a tall sprite.
   **Grid** beside the zoom buttons toggles a pixel grid (hairlines in the desktop app, alternate pixels
   tinted in a terminal).
-  **Save to prompt** flattens the visible layers into your prompt, with the frame times and tags.
+  **Send to Claude** flattens the visible layers into your prompt, with the frame times and tags.
 
 Exact clicks on large sprites (drawn two pixels per character) need a terminal that reports pixel
 positions: kitty, Ghostty, iTerm2, WezTerm or foot. In the desktop app a sprite too wide for the pane
@@ -124,15 +125,19 @@ In the editor:
   tiles join up. **Edit pixels** draws on the map itself: each stroke lands in the tile under it, so
   every repeat of that tile follows. Right-click there picks a colour. Keys M and P switch. **View**
   previews the map flat, as walls or isometric (cells paint in every view; pixels on the flat map).
-- **Edit a tile** opens any of the 16 tiles at full size (Brush, Eraser, Fill, Pick; keys B, E, G, I;
-  the line under them says what the chosen one does, and **Keys** shows every shortcut). **Base texture**
-  opens the base: **Offset ½** brings its seams to the middle, and **Done** derives every edge tile
-  from it again, keeping any you drew by hand. **Previous version** brings back a tile as it was before
-  its last Done. **Open in pixel editor** takes the tile to the pixel editor pane, with every tool
-  there; its **Back to tiles** brings it back for Done.
+- The 16 tiles show as thumbnails under the palette (each tile's corners in their colours); click one
+  to edit it at full size (Brush, Eraser, Fill, Pick; keys B, E, G, I; the line under them says what the
+  chosen one does, and **Keys** shows every shortcut), then **Apply tile** or **Discard**. **Base
+  texture** opens the base: **Offset ½** brings its seams to the middle, and **Apply texture** derives
+  every edge tile from it again, keeping any you drew by hand. **Previous version** brings back a tile
+  as it was before it was last applied. **Open in pixel editor** takes the tile to the pixel editor
+  pane, with every tool there; its **Back to tiles** brings it back to apply.
+- While you draw pixels (a tile, the base or Edit pixels) the colour **Picker** shows under the canvas;
+  a pick joins the palette, and trying colours retunes that one until a pixel uses it. **Presets** shows
+  a row of ready colours to add.
 - A platformer set shows its 7x7 sheet: click a tile to edit it, or **Edit pixels** to draw on the sheet.
 - Ctrl+Z / Ctrl+Shift+Z undo and redo; `+` and `-` zoom (big tiles show at 1/2 or 1/4 size while you
-  paint cells); **Grid** toggles a pixel grid, as in the pixel editor; **Save to prompt** sends the set
+  paint cells); **Grid** toggles a pixel grid, as in the pixel editor; **Send to Claude** sends the set
   as one sheet, laid out as it came.
 - In the desktop app, as in the pixel editor, a sheet or tile too wide for the pane keeps full-size
   pixels and scrolls across (◀ ▶, or Shift+Left / Right), with the whole of it small under the canvas.

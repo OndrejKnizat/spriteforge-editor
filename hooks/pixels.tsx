@@ -10,7 +10,7 @@
 // per few pixels, so `canvas` draws the rows ("bands") that fit both the pane and a size budget,
 // from `top`, and the pane scrolls when that is not all of them.
 import type { ClientPointerEvent, ClientSurface } from 'claude-code'
-import { lum, mixHex } from './tools'
+import { hexHsv, hsvHex, lum, mixHex } from './tools'
 
 // A band is one pixel row (block mode, z cell rows tall) or two (half mode, one cell row). `cw`: the
 // columns a pixel takes across (2z unless square). `span`: the pixel columns that fit across; a
@@ -314,4 +314,102 @@ export function gridLines(els: ClientSurface['elements'], g: Geo, width: number)
 // The rows a scrolled drawing shows, for the status line.
 export function rowsShown(g: Geo, height: number): string {
   return g.bands < g.total ? ` · rows ${g.half ? g.top * 2 + 1 : g.top + 1}-${Math.min(height, g.half ? (g.top + g.bands) * 2 : g.top + g.bands)} (Up/Down)` : ''
+}
+
+// ── the palette ──
+// One chip per colour, in rows of a fixed width so the pane knows where each chip is and a press
+// anywhere on it picks that colour (the colour is drawn, so the pane maps the pointer; the number
+// beside it is also a Button, for the keyboard and the tests). A chip: 2 columns of colour, 4 of
+// number (on the site's chip colour, gold while it is the colour in use), then a 1-column gap.
+export const SWATCH_W = 7
+export const swatchesPerRow = (cols: number) => Math.max(1, Math.floor((cols + 1) / SWATCH_W))
+export type Swatch = { hex: string; label: string; lit: boolean; onPress: () => void }
+export function swatchRows(els: ClientSurface['elements'], boxes: boolean, chips: Swatch[], cols: number) {
+  const { Box, Text, Button } = els, per = swatchesPerRow(cols)
+  const chip = (c: Swatch, i: number) => boxes
+    ? (
+      <Box key={`swatch-${i}`} flexDirection="row" width={SWATCH_W} height={1} flexShrink={0}>
+        <Box width={2} height={1} backgroundColor={c.hex} />
+        <Box width={4} height={1} backgroundColor={c.lit ? CHIP_ON : CHIP} justifyContent="center">
+          <Button key={`c${i}`} plain label={c.label} onPress={c.onPress} />
+        </Box>
+      </Box>
+    )
+    : (
+      <Box key={`swatch-${i}`} flexDirection="row" width={SWATCH_W} flexShrink={0}>
+        <Text color={c.hex}>██</Text>
+        <Button key={`c${i}`} plain label={c.label} onPress={c.onPress} />
+      </Box>
+    )
+  return Array.from({ length: Math.ceil(chips.length / per) }, (_, r) => (
+    <Box key={`pal${r}`} flexDirection="row" height={1} flexShrink={0}>{chips.slice(r * per, r * per + per).map((c, k) => chip(c, r * per + k))}</Box>
+  ))
+}
+// The chip under a press on the palette's rows (drawn from row `top`), or -1.
+export function swatchAt(ev: ClientPointerEvent, top: number, count: number, cols: number): number {
+  const per = swatchesPerRow(cols), col = Math.floor(ev.x / SWATCH_W)
+  if (ev.y < top || col >= per) return -1
+  const i = (ev.y - top) * per + col
+  return i < count ? i : -1
+}
+
+// ── the colour picker ──
+// As in SpriteForge's Edit studio: a saturation (across) by value (down) square in the colour's hue,
+// then a hue strip, one cell per step, so the pointer can find each step on either surface.
+export const PICK_W = 40, PICK_H = 9
+export type Hsv = [number, number, number]
+// The picker's hue, saturation and value for colour `cur`, keeping the last hue while `cur` is a grey.
+export function pickFor(cur: string | null, pick: Hsv): Hsv {
+  const [h] = pick
+  if (!cur || hsvHex(pick[0], pick[1], pick[2]) === cur) return pick
+  const c = hexHsv(cur)
+  return [c.s > 0 ? c.h : h, c.s, c.v]
+}
+// A press at step x of the square's row y, or of the hue strip.
+export function pickStep(hsv: Hsv, x: number, y: number | 'hue'): Hsv {
+  let [h, s, v] = hsv
+  const cx = Math.max(0, Math.min(PICK_W - 1, x))
+  if (y === 'hue') h = (cx / PICK_W) * 360
+  else { s = cx / (PICK_W - 1); v = 1 - Math.max(0, Math.min(PICK_H - 1, y)) / (PICK_H - 1) }
+  return [h, s, v]
+}
+// The picker's cells, the square row by row and then the hue strip; a ring marks the colour now set,
+// dark on a light cell and light on a dark one, as the studio's does.
+export function pickerRows(els: ClientSurface['elements'], boxes: boolean, hsv: Hsv) {
+  const { Box, Text } = els
+  const [hue, s, v] = hsv
+  const mx = Math.round(s * (PICK_W - 1)), my = Math.round((1 - v) * (PICK_H - 1)), hx = Math.floor((hue / 360) * PICK_W) % PICK_W
+  const cell = (x: number, y: number): [string, boolean, string] => y === PICK_H
+    ? [hsvHex((x / PICK_W) * 360, 1, 1), x === hx, '#ffffff']
+    : [hsvHex(hue, x / (PICK_W - 1), 1 - y / (PICK_H - 1)), x === mx && y === my, 1 - y / (PICK_H - 1) > 0.6 ? '#000000' : '#ffffff']
+  return Array.from({ length: PICK_H + 1 }, (_, y) => {
+    const cells = Array.from({ length: PICK_W }, (_, x) => {
+      const [c, mark, ring] = cell(x, y)
+      if (boxes) return <Box width={1} height={1} backgroundColor={c}>{mark ? <Text color={ring}>◆</Text> : null}</Box>
+      return mark ? <Text color={ring} backgroundColor={c}>◆</Text> : <Text color={c}>█</Text>
+    })
+    return boxes
+      ? <Box key={`p${y}`} flexDirection="row" height={1} flexShrink={0}>{cells}</Box>
+      : <Text key={`p${y}`} mono wrap="truncate-end">{cells}</Text>
+  })
+}
+// Where a press lands on the picker drawn from row `top`: the square's row, or the strip; null off it.
+export function pickerHit(ev: ClientPointerEvent, top: number): { x: number; on: 'sv' | 'hue'; y: number | 'hue' } | null {
+  const x = Math.floor(ev.fine ? ev.fine.x : ev.x)
+  if (ev.y < top || ev.y > top + PICK_H || x < 0 || x >= PICK_W) return null
+  return ev.y === top + PICK_H ? { x, on: 'hue', y: 'hue' } : { x, on: 'sv', y: ev.y - top }
+}
+
+// The colour in use, larger than a chip, beside the tools: a block of it and its hex ("none" for
+// the eraser or no colour).
+export function colourNow(els: ClientSurface['elements'], boxes: boolean, hex: string | null, key = 'now') {
+  const { Box, Text } = els
+  return (
+    <Box key={key} flexDirection="row" columnGap={1}>
+      {boxes
+        ? <Box width={4} height={1} backgroundColor={hex || CHIP} />
+        : hex ? <Text color={hex}>████</Text> : <Text dimColor>····</Text>}
+      <Text dimColor={!hex}>{hex || 'none'}</Text>
+    </Box>
+  )
 }

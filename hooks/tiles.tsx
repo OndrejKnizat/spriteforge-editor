@@ -17,11 +17,12 @@ import type { ClientKeyEvent, ClientModule, ClientPointerEvent, ClientSurface } 
 
 import type { TileDoc } from '../types'
 import {
-  BACKDROPS, EMPTY, GRID_LINE_COST, OVERVIEW_BUDGET, SHADE, SOLID, canvas, chips, decodeFrame, encodeFrame, fit, flood, gridLines, line, overview, pixelAt,
-  rowsShown, zoomStep,
+  BACKDROPS, EMPTY, GRID_LINE_COST, OVERVIEW_BUDGET, PICK_H, SHADE, SOLID, canvas, chips, colourNow, decodeFrame, encodeFrame, fit, flood, gridLines, line, overview,
+  pickFor, pickStep, pickerHit, pickerRows, pixelAt, rowsShown, swatchAt, swatchRows, swatchesPerRow, zoomStep,
 } from './pixels'
-import type { Fit, Geo, Look } from './pixels'
-import { BASE, CORNERS, QUADS, projectIso, rederive, shadeHex, wallOverlay, wangPlacements } from './wang'
+import type { Fit, Geo, Hsv, Look, Swatch } from './pixels'
+import { hsvHex } from './tools'
+import { BASE, CORNERS, projectIso, rederive, shadeHex, wallOverlay, wangPlacements } from './wang'
 
 type Tool = 'brush' | 'eraser' | 'fill' | 'pick'
 type View = 'flat' | 'wall' | 'iso'
@@ -46,6 +47,11 @@ type State = {
   grid: boolean // the pixel grid: hairlines on the desktop, a tint on the terminal
   help: boolean // the shortcut sheet
   color: number
+  picker: boolean // the colour picker under the canvas, while drawing pixels
+  pick: Hsv // its hue, saturation and value, kept so a grey keeps its hue
+  pickDrag: 'sv' | 'hue' | null // a press on the picker that hasn't ended: its colour joins the palette on release
+  pickAdded: number // the palette entry the picker last added, retuned by the next pick until a pixel uses it; -1 none
+  presets: boolean // the row of preset colours to add
   undo: Snap[]
   redo: Snap[]
   edit: Edit | null
@@ -64,9 +70,13 @@ type Drawn = Geo & { plan: Plan | null; dw: number; dh: number; view: View | 'sh
 
 const UNDO_CAP = 40
 const CANVAS_BUDGET = 76_000 // serialized characters for the canvas; the controls take the rest
+const PICKER_BUDGET = 26_000 // the colour picker's share of it, while it shows
+const CHIP_EMPTY = '#2a2925' // a transparent corner in a tile's thumbnail
+// What the palette's chips and the tiles' thumbnails serialize to, about, so the canvas leaves room.
+const CHIP_COST = 330, THUMB_COST = 700
 const PALETTE_SHOWN = 64
 const MAX_COLORS = 256
-const CELL_SHADE = '#5b6270' // every other empty map cell, so the cells show
+const CELL_SHADE = '#3b3f47' // every other empty map cell, so the cells show without looking like terrain
 const SEED = '#c6ccd2' // a set with no colours gets one, so the brush paints something (project.html _seedEditColor)
 // Map zoom steps, smallest first: every 4th or 2nd pixel in half blocks, half blocks, blocks 1-4.
 // The desktop reports the pointer by whole cells, so it draws no half blocks (whose lower pixel it
@@ -87,10 +97,10 @@ const KEYS: Record<string, Tool> = { b: 'brush', p: 'brush', e: 'eraser', g: 'fi
 // hover inside a desktop pane, so this stands in for tooltips (as in editor.tsx).
 const TOOL_KEY: Record<Tool, string> = { brush: 'B', eraser: 'E', fill: 'G', pick: 'I' }
 const TOOL_HELP: Record<Tool, string> = {
-  brush: 'paints the chosen colour; right-click erases',
-  eraser: 'erases to transparent',
-  fill: 'fills the area of one colour; right-click fills with transparency',
-  pick: 'takes a colour from the tile (a transparent pixel picks the eraser); right-click erases',
+  brush: 'click to paint · right-click erases',
+  eraser: 'click to erase to transparent',
+  fill: 'click to fill an area of one colour · right-click fills with transparency',
+  pick: 'click to take a colour from the tile (a transparent pixel picks the eraser) · right-click erases',
 }
 const SHORTCUTS = [
   'Map: M paint map · P edit pixels · Ctrl+S save to prompt',
@@ -102,6 +112,54 @@ const geometry = new WeakMap<object, Drawn>()
 const plans = new WeakMap<number[], Map<string, Plan>>()
 // Where the overview of a wide picture sits (pixels.tsx overview): a press there moves the view.
 const overviewAt = new WeakMap<object, { top: number; height: number; pw: number; step: number }>()
+// Where the colour picker and the palette's rows start, so a press there picks a colour.
+const pickerTop = new WeakMap<object, number>()
+const paletteAt = new WeakMap<object, { top: number; count: number; cols: number }>()
+const thumbsAt = new WeakMap<object, { top: number; count: number; cols: number }>()
+const currentHex = (st: State) => (st.color >= 0 ? st.palette[st.color]! : null)
+// The Wang set's tiles as thumbnails under the palette: each tile's four corners in their main
+// colours (which corners are painted is what tells the tiles apart), its number under them.
+const THUMB_W = 6, THUMB_H = 3
+const thumbsPerRow = (cols: number) => Math.max(1, Math.floor((cols + 2) / THUMB_W))
+
+// The picker's colour, when a press on it ends. While the colour the picker added last is still the
+// one in use, the last in the palette and on no pixel, it is retuned instead of adding another, so
+// trying hues doesn't fill the palette; once a pixel has it, the next pick adds a new colour.
+function usePick(st: State, hex: string): State {
+  const t = st.pickAdded, palette = st.palette
+  const unused = (i: number) => !st.tiles.some((tile) => tile.includes(i)) && !(st.edit && st.edit.art.includes(i))
+  if (t >= 0 && t === st.color && t === palette.length - 1 && unused(t)) {
+    const at = palette.indexOf(hex)
+    if (at === t) return st
+    // The colour is already a swatch: use that one and drop the spare.
+    if (at >= 0) return { ...addColor({ ...st, palette: palette.slice(0, t) }, hex), pickAdded: -1 }
+    return { ...addColor({ ...st, palette: palette.slice(0, t).concat([hex]) }, hex), pickAdded: t }
+  }
+  const next = addColor(st, hex)
+  return { ...next, pickAdded: next.palette.length > palette.length ? next.color : -1 }
+}
+
+// A press or drag on the picker; false when the pointer is not the picker's. The colour joins the
+// palette (or picks the swatch that has it) when the press ends, so a drag adds one colour.
+function onPicker(surface: ClientSurface<State>, st: State, ev: ClientPointerEvent): boolean {
+  const top = pickerTop.get(surface)
+  if (ev.type === 'up' || ev.type === 'leave') {
+    if (!st.pickDrag) return false
+    surface.setState(usePick({ ...st, pickDrag: null }, hsvHex(...st.pick)))
+    return true
+  }
+  const live = (pick: Hsv, on: 'sv' | 'hue') => ({ ...st, pick, pickDrag: on, note: `Picking ${hsvHex(...pick)}: let go to use it.` })
+  if (st.pickDrag && top !== undefined && ev.type === 'move' && ev.button) {
+    const x = Math.floor(ev.fine ? ev.fine.x : ev.x)
+    surface.setState(live(pickStep(st.pick, x, st.pickDrag === 'hue' ? 'hue' : ev.y - top), st.pickDrag))
+    return true
+  }
+  if (top === undefined || ev.type !== 'down' || st.drag) return false
+  const hit = pickerHit(ev, top)
+  if (!hit) return false
+  surface.setState(live(pickStep(pickFor(currentHex(st), st.pick), hit.x, hit.y), hit.on))
+  return true
+}
 
 // Which cells the map shows and how big: the largest zoom at which enough cells fit both the
 // pane and the drawing budget, then (Edit pixels) centred on the painted cells. The budget is
@@ -193,7 +251,7 @@ function fromDoc(doc: TileDoc, cols: number, rows: number, back: Back | null | u
     rev: doc.rev, kind: doc.kind || 'wang', T: doc.tile, palette, tiles,
     prev: new Array<number[] | null>(tiles.length).fill(null), cells: [], mode: 'cells', view: doc.view || 'flat', zoom: 0, top: 0,
     left: 0, grid: false, help: false,
-    color: 0, undo: [], redo: [], edit: null, drag: null, note: '', sizer: [], seen: back ? back.id : 0,
+    color: 0, picker: true, pick: [0, 0, 0], pickDrag: null, pickAdded: -1, presets: false, undo: [], redo: [], edit: null, drag: null, note: '', sizer: [], seen: back ? back.id : 0,
   }
   if (st.kind !== 'wang') return st
   st.sizer = st.tiles[BASE]!
@@ -343,7 +401,7 @@ function takeBack(st: State, b: Back): State {
   })
   const base = st.edit && st.edit.mask === b.mask ? st : openTile({ ...st, edit: null }, b.mask, st.kind === 'wang' && b.mask === BASE && !!(st.edit && st.edit.base))
   const next = editArt({ ...base, palette, seen: b.id }, art, false)
-  return { ...next, note: `Tile ${b.mask} is back from the pixel editor: Done keeps it.` }
+  return { ...next, note: `Tile ${b.mask} is back from the pixel editor: Apply tile keeps it.` }
 }
 
 function addColor(st: State, hex: string): State {
@@ -454,6 +512,19 @@ function editPointer(surface: ClientSurface<State>, st: State, e: Edit, ev: Clie
 function onPointer(surface: ClientSurface<State>, ev: ClientPointerEvent) {
   const st = surface.state, geo = geometry.get(surface)
   if (!st || !geo || ev.type === 'enter') return
+  if (onPicker(surface, st, ev)) return
+  const pal = paletteAt.get(surface)
+  if (pal && ev.type === 'down' && !st.drag) {
+    // A press anywhere on a palette chip picks it, as its number does.
+    const i = swatchAt(ev, pal.top, pal.count, pal.cols)
+    if (i >= 0) return surface.setState(addColor(st, st.palette[i]!))
+  }
+  const th = thumbsAt.get(surface)
+  if (th && ev.type === 'down' && !st.drag && !st.edit && ev.y >= th.top) {
+    // A press on a tile's thumbnail opens it, as its number does.
+    const per = thumbsPerRow(th.cols), col = Math.floor(ev.x / THUMB_W), m = Math.floor((ev.y - th.top) / THUMB_H) * per + col
+    if (col < per && m < th.count) return surface.setState(openTile(st, m))
+  }
   const o = overviewAt.get(surface)
   if (o && ev.type === 'down' && !st.drag && ev.y >= o.top && ev.y < o.top + o.height) {
     // Centre the view on the column pressed.
@@ -552,6 +623,16 @@ function onKey(surface: ClientSurface<State>, k: ClientKeyEvent) {
 }
 
 // The colour a tile shows most, for its button.
+function quadrants(tile: number[], T: number, palette: string[]): (string | undefined)[] {
+  const h = Math.ceil(T / 2)
+  return [[0, 0], [1, 0], [0, 1], [1, 1]].map(([qx, qy]) => {
+    const part: number[] = []
+    for (let y = qy! * h; y < Math.min(T, (qy! + 1) * h); y++) for (let x = qx! * h; x < Math.min(T, (qx! + 1) * h); x++) part.push(tile[y * T + x]!)
+    // A quadrant mostly transparent shows as empty.
+    return part.filter((v) => v >= 0).length * 2 < part.length ? undefined : dominant(part, palette)
+  })
+}
+
 function dominant(tile: number[], palette: string[]): string | undefined {
   const count = new Map<number, number>()
   let best = -1, most = 0
@@ -649,8 +730,11 @@ const Tiles: ClientModule<Props, State> = (props, surface) => {
   left = Math.max(0, Math.min(dw - span, left))
   // The desktop draws the grid as hairlines over the pixels, the terminal as a tint (pixels.tsx).
   const lined = st.grid && boxes && !f.half, across = span < dw
+  // The picker shows while pixels are being drawn: a tile, the base texture, or Edit pixels.
+  const showPicker = st.picker && (!!e || st.mode === 'pixels')
+  const chipsCost = CHIP_COST * Math.min(st.palette.length, PALETTE_SHOWN) + (st.kind === 'wang' && !e ? THUMB_COST * st.tiles.length : 0)
   const drawn = canvas(look, dw, dhigh, f, top, surface.elements,
-    CANVAS_BUDGET - (lined ? GRID_LINE_COST * (span + f.visible + 2) : 0) - (across && boxes ? OVERVIEW_BUDGET : 0),
+    CANVAS_BUDGET - (lined ? GRID_LINE_COST * (span + f.visible + 2) : 0) - (across && boxes ? OVERVIEW_BUDGET : 0) - (showPicker ? PICKER_BUDGET : 0) - chipsCost,
     // Empty map space stays blank, as the pixel pane's default backdrop does (no dots).
     { boxes, grid: st.grid && !boxes, left, backdrop: BACKDROPS.indexOf('blank') })
   const g: Drawn = { ...f, top, left, across: dw, sideways: boxes, bands: drawn.bands, rows: drawn.bands * f.bandRows, plan: p, dw, dh: dhigh, view: e ? 'flat' : view, s, W, H }
@@ -664,21 +748,58 @@ const Tiles: ClientModule<Props, State> = (props, surface) => {
   const scrolls = g.bands < g.total
   const hex = st.color >= 0 ? st.palette[st.color] : null
   const extra = EXTRA.filter((c) => !st.palette.includes(c))
-  // Each chip sits beside its Button, not in it: the desktop draws a Button's Text children in its own colour.
+  // Under the canvas (and the overview): the picker while drawing pixels, then the palette's chips,
+  // in rows the pointer can find.
+  const underCanvas = g.rows + 1 + (ov ? ov.height + 1 : 0)
+  if (showPicker) pickerTop.set(surface, underCanvas)
+  else pickerTop.delete(surface)
+  const pickerBox = showPicker && (
+    <Box key="picker" flexDirection="column" marginTop={1}>{pickerRows(surface.elements, boxes, st.pickDrag ? st.pick : pickFor(hex, st.pick))}</Box>
+  )
+  const chipList: Swatch[] = st.palette.slice(0, PALETTE_SHOWN).map((c, i) => {
+    const on = i === st!.color && !(e && e.tool === 'eraser')
+    return { hex: c, label: on ? `[${i + 1}]` : `${i + 1}`, lit: on, onPress: set((x) => addColor(x, x.palette[i]!)) }
+  })
+  paletteAt.set(surface, { top: showPicker ? underCanvas + PICK_H + 2 : underCanvas, count: chipList.length, cols })
   const swatches = (
-    <Box key="palette" flexWrap="wrap" marginTop={1}>
-      {st.palette.slice(0, PALETTE_SHOWN).map((c, i) => (
-        <Box key={`swatch-${i}`} marginRight={1}>
-          <Text color={c}>██</Text>
-          <Button key={`c${i}`} plain label={i === st!.color && !(e && e.tool === 'eraser') ? `[${i + 1}]` : `${i + 1}`} onPress={set((x) => addColor(x, x.palette[i]!))} />
-        </Box>
+    <Box key="palette" flexDirection="column" marginTop={1}>
+      {swatchRows(surface.elements, boxes, chipList, cols)}
+      {st.palette.length > PALETTE_SHOWN && <Text dimColor>{`+${st.palette.length - PALETTE_SHOWN} more (Pick takes any)`}</Text>}
+    </Box>
+  )
+  const palTop = showPicker ? underCanvas + PICK_H + 2 : underCanvas
+  const palRows = Math.ceil(chipList.length / swatchesPerRow(cols)) + (st.palette.length > PALETTE_SHOWN ? 1 : 0)
+  const thumbs = st.kind === 'wang' && !e
+  if (thumbs) thumbsAt.set(surface, { top: palTop + palRows + 1, count: st.tiles.length, cols })
+  else thumbsAt.delete(surface)
+  const per = thumbsPerRow(cols)
+  const thumb = (t: number[], m: number) => {
+    const q = quadrants(t, T, st!.palette)
+    const pair = (a: string | undefined, b: string | undefined, k: string) => boxes
+      ? <Box key={k} flexDirection="row" height={1}><Box width={2} height={1} backgroundColor={a || CHIP_EMPTY} /><Box width={2} height={1} backgroundColor={b || CHIP_EMPTY} /></Box>
+      : <Text key={k}>{a ? <Text color={a}>██</Text> : <Text dimColor>··</Text>}{b ? <Text color={b}>██</Text> : <Text dimColor>··</Text>}</Text>
+    return (
+      <Box key={`tile-chip-${m}`} flexDirection="column" width={THUMB_W} height={THUMB_H} flexShrink={0}>
+        {pair(q[0], q[1], 'top')}
+        {pair(q[2], q[3], 'bottom')}
+        <Button key={`tile-${m}`} plain label={`${m}`} onPress={set((x) => openTile(x, m))} />
+      </Box>
+    )
+  }
+  const tileThumbs = thumbs && (
+    <Box key="tiles" flexDirection="column" marginTop={1}>
+      {Array.from({ length: Math.ceil(st.tiles.length / per) }, (_, r) => (
+        <Box key={`thumbs-${r}`} flexDirection="row" height={THUMB_H} flexShrink={0}>{st!.tiles.slice(r * per, r * per + per).map((t, k) => thumb(t, r * per + k))}</Box>
       ))}
-      {st.palette.length > PALETTE_SHOWN && <Text dimColor>{` +${st.palette.length - PALETTE_SHOWN} more (Pick takes any)`}</Text>}
+      <Box key="tiles-more" flexDirection="row" columnGap={2}>
+        <Text dimColor>Click a tile to edit it.</Text>
+        <Button key="base" label="Base texture" onPress={set((x) => openTile(x, BASE, true))} />
+      </Box>
     </Box>
   )
   const colours = (
     <Box key="colours" flexDirection="column">
-      {extra.length > 0 && (
+      {st.presets && extra.length > 0 && (
         <Box key="extra" flexWrap="wrap">
           <Text dimColor>add </Text>
           {extra.map((c) => (
@@ -689,7 +810,14 @@ const Tiles: ClientModule<Props, State> = (props, surface) => {
           ))}
         </Box>
       )}
-      <Box key="hexrow">
+      <Box key="hexrow" columnGap={2}>
+        {(e || st.mode === 'pixels') && (
+          <Button key="picker" label="Picker" variant={st.picker ? 'primary' : 'secondary'} onPress={set((x) => ({
+            ...x, picker: !x.picker, pickDrag: null,
+            note: x.picker ? 'The picker is hidden; press Picker to show it again.' : 'The picker under the canvas adds a colour: the square is saturation and brightness, the strip under it the hue.',
+          }))} />
+        )}
+        <Button key="presets" label="Presets" variant={st.presets ? 'primary' : 'secondary'} onPress={set((x) => ({ ...x, presets: !x.presets }))} />
         <Input key="hex" label="Colour " placeholder="#rrggbb" submitLabel="add" onSubmit={(value) => {
           const x = surface.state
           if (!x) return
@@ -723,7 +851,7 @@ const Tiles: ClientModule<Props, State> = (props, surface) => {
 
   if (e) {
     const corners = cornersOf(e.mask)
-    const title = e.base ? 'Base texture: Done derives every edge tile from it again; tiles drawn by hand stay'
+    const title = e.base ? 'Base texture: Apply texture derives every edge tile from it again; tiles drawn by hand stay'
       : st.kind === 'wang' ? `Tile ${e.mask}: drawn where ${corners.length ? corners.join('+') : 'no corner'} ${corners.length === 1 ? 'is' : 'are'} painted`
       : `Tile ${e.mask} (row ${Math.floor(e.mask / SHEET) + 1}, column ${(e.mask % SHEET) + 1})`
     const label = (TOOLS.find(([k]) => k === e.tool) || [e.tool, e.tool])[1]
@@ -731,9 +859,11 @@ const Tiles: ClientModule<Props, State> = (props, surface) => {
       <Box flexDirection="column">
         <Box key="canvas" flexDirection="column">{drawn.rows}{grid}</Box>
         {overviewBox}
+        {pickerBox}
         {swatches}
         {/* The tools; then what the chosen one does. */}
         <Box key="tools" flexWrap="wrap" columnGap={2} marginTop={1}>
+          {colourNow(surface.elements, boxes, e.tool === 'eraser' ? null : hex)}
           <Box key="tools-0" flexWrap="wrap" columnGap="xs">
             {TOOLS.map(([t, name]) => (
               <Button key={`t-${t}`} label={name} variant={e.tool === t ? 'primary' : 'secondary'} onPress={set((x) => (x.edit ? { ...x, edit: { ...x.edit, tool: t }, note: '' } : x))} />
@@ -743,6 +873,10 @@ const Tiles: ClientModule<Props, State> = (props, surface) => {
         <Text key="tool-help" dimColor wrap="wrap">{`${label} (${TOOL_KEY[e.tool]}): ${TOOL_HELP[e.tool]}`}</Text>
         {/* History, view, the tile's own changes and the way out. */}
         <Box key="main" flexWrap="wrap" columnGap={2} marginTop={1}>
+          <Box key="out" columnGap="xs">
+            <Button key="done" label={e.base ? 'Apply texture' : 'Apply tile'} variant="primary" onPress={set(done)} />
+            <Button key="cancel" label="Discard" onPress={set((x) => ({ ...x, edit: null, drag: null, note: 'Changes discarded.' }))} />
+          </Box>
           {history}
           {viewGroup}
           <Box key="tile" columnGap="xs">
@@ -752,17 +886,13 @@ const Tiles: ClientModule<Props, State> = (props, surface) => {
             {st.prev[e.mask] && <Button key="previous" label="Previous version" onPress={set((x) => (x.edit && x.prev[x.edit.mask] ? editArt(x, x.prev[x.edit.mask]!.slice(), false) : x))} />}
             <Button key="studio" label="Open in pixel editor" onPress={() => toStudio(surface)} />
           </Box>
-          <Box key="out" columnGap="xs">
-            {keysButton}
-            <Button key="done" label="Done" variant="primary" onPress={set(done)} />
-            <Button key="cancel" label="Cancel" onPress={set((x) => ({ ...x, edit: null, drag: null, note: '' }))} />
-          </Box>
+          {keysButton}
         </Box>
         {keys}
         {colours}
         <Text key="status" dimColor wrap="truncate-end">
           {st.note || `${title} · ${e.tool}${e.tool === 'eraser' ? '' : hex ? ` ${hex}` : ' (no colour)'}${e.offset ? ' · offset ½ (seams in the middle)' : ''}` +
-            `${shown} · Enter is Done`}
+            `${shown} · Enter applies`}
         </Text>
       </Box>
     )
@@ -770,9 +900,9 @@ const Tiles: ClientModule<Props, State> = (props, surface) => {
 
   const painting = st.mode === 'cells' || st.view !== 'flat'
   const modeHelp = st.kind === 'platformer'
-    ? st.mode === 'cells' ? 'Pick tiles (M): click a tile to edit it' : 'Edit pixels (P): draw on the sheet; right-click picks a colour'
-    : painting ? `Paint map (M)${st.view === 'flat' ? '' : `, previewed as ${VIEW_LABEL[st.view]}`}: click or drag cells to paint them, right-click clears them`
-    : 'Edit pixels (P): a stroke lands in the tile under it, and every repeat follows; right-click picks a colour'
+    ? st.mode === 'cells' ? 'Pick tiles (M): click a tile to edit it' : 'Edit pixels (P): draw on the sheet · right-click picks a colour'
+    : painting ? `Paint map (M)${st.view === 'flat' ? '' : `, previewed as ${VIEW_LABEL[st.view]}`}: click or drag to paint terrain · right-click clears`
+    : 'Edit pixels (P): draw on the map; each stroke lands in its tile and every copy follows · right-click picks a colour'
   const status = st.kind === 'platformer'
     ? `${st.mode === 'cells' ? 'pick tiles' : `edit pixels${hex ? ` ${hex}` : ''}`} · 49 tiles of ${T}px${s > 1 ? ` at 1/${s} size` : ''}${shown}`
     : `${painting ? `paint map${st.view === 'flat' ? '' : ` (${VIEW_LABEL[st.view]})`}` : `edit pixels${hex ? ` ${hex}` : ''}`}` +
@@ -781,9 +911,12 @@ const Tiles: ClientModule<Props, State> = (props, surface) => {
     <Box flexDirection="column">
       <Box key="canvas" flexDirection="column">{drawn.rows}{grid}</Box>
       {overviewBox}
+      {pickerBox}
       {swatches}
+      {tileThumbs}
       {/* The map's modes and its own changes; then what the mode does. */}
       <Box key="modes" flexWrap="wrap" columnGap={2} marginTop={1}>
+        {st.mode === 'pixels' && colourNow(surface.elements, boxes, hex)}
         <Box key="modes-0" columnGap="xs">
           <Button key="m-cells" label={st.kind === 'wang' ? 'Paint map' : 'Pick tiles'} variant={st.mode === 'cells' ? 'primary' : 'secondary'} onPress={set((x) => setMode(x, 'cells'))} />
           {(st.kind === 'platformer' || st.view === 'flat') && (
@@ -803,27 +936,14 @@ const Tiles: ClientModule<Props, State> = (props, surface) => {
       <Text key="mode-help" dimColor wrap="wrap">{modeHelp}</Text>
       {/* History, view and the way out. */}
       <Box key="main" flexWrap="wrap" columnGap={2} marginTop={1}>
+        <Box key="out" columnGap="xs">
+          <Button key="save" label="Send to Claude" variant="primary" onPress={() => save(surface)} />
+        </Box>
         {history}
         {viewGroup}
-        <Box key="out" columnGap="xs">
-          {keysButton}
-          <Button key="save" label="Save to prompt" variant="primary" onPress={() => save(surface)} />
-        </Box>
+        {keysButton}
       </Box>
       {keys}
-      {st.kind === 'wang' && (
-        <Box key="tiles" flexWrap="wrap" columnGap={1} marginTop={1}>
-          <Text key="tiles-label" dimColor>Edit a tile:</Text>
-          {/* The glyph (the tile's corners, in its main colour) beside its Button, as the swatches are. */}
-          {st.tiles.map((t, m) => (
-            <Box key={`tile-chip-${m}`}>
-              <Text color={dominant(t, st!.palette)} dimColor={m === 0 || undefined}>{m === 0 ? '·' : QUADS[m]}</Text>
-              <Button key={`tile-${m}`} plain label={`${m}`} onPress={set((x) => openTile(x, m))} />
-            </Box>
-          ))}
-          <Button key="base" label="Base texture" onPress={set((x) => openTile(x, BASE, true))} />
-        </Box>
-      )}
       {colours}
       <Text key="status" dimColor wrap="truncate-end">{st.note || status}</Text>
     </Box>

@@ -3,7 +3,7 @@
 // Claude's chat apps).
 //
 // /spriteforge-draw [file.png | WxH], or Claude's open_pixel_editor tool, puts a sprite in the
-// editor pane; its region (editor.tsx) draws it and takes the mouse and keys; "Save to prompt"
+// editor pane; its region (editor.tsx) draws it and takes the mouse and keys; "Send to Claude"
 // posts the pixels back here and they land in the prompt box as a GRID + PALETTE block the
 // person sends to Claude. /spriteforge-tiles and open_tile_editor do the same for a 16-tile Wang
 // terrain set in the tile editor pane (tiles.tsx, wang.ts). Nothing leaves the machine: PNGs are
@@ -513,7 +513,7 @@ export const register: Register = (on) => {
         'Open a pixel-art editor in a pane beside the conversation so the user can edit a sprite by hand with the mouse. ' +
         'Give one source: path (a PNG file in the project, up to 64x64 and 256 colours), palette + grid (pixel art you drafted: ' +
         'hex colours and rows of palette indexes, -1 transparent; frames for an animation), or width + height for a blank canvas. ' +
-        'It returns at once. When the user clicks "Save to prompt", their prompt box is filled with the edited sprite as a GRID ' +
+        'It returns at once. When the user clicks "Send to Claude", their prompt box is filled with the edited sprite as a GRID ' +
         '(one letter per pixel, "." transparent) + PALETTE block for them to send to you; write it back to the file if they ask.',
       inputSchema: {
         type: 'object',
@@ -546,7 +546,7 @@ export const register: Register = (on) => {
         'make a Wang set from), palette + tiles (Wang: 16 grids in mask order, tile i drawn where the map cells at its corners are ' +
         "painted, NW=1 NE=2 SW=4 SE=8, so 15 is the solid base; platformer: 49 grids in SpriteForge's order), palette + base (one " +
         'seamless texture grid; the 16 Wang tiles are derived from it as SpriteForge does), or size for a placeholder. It returns at ' +
-        'once. When the user clicks "Save to prompt", their prompt box is filled with the set as one GRID sheet + PALETTE for them to send to you.',
+        'once. When the user clicks "Send to Claude", their prompt box is filled with the set as one GRID sheet + PALETTE for them to send to you.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -601,7 +601,7 @@ export const register: Register = (on) => {
       const r = await openTiles($, parseTileArgs(e.args))
       return {
         text: (r.isPlaced
-          ? `Opened ${tilesWhat(r.doc)} in the tile editor. ${r.doc.kind === 'platformer' ? 'Click a tile to edit it' : 'Paint the map to see the tiles chain'}; "Save to prompt" puts the set in your prompt.`
+          ? `Opened ${tilesWhat(r.doc)} in the tile editor. ${r.doc.kind === 'platformer' ? 'Click a tile to edit it' : 'Paint the map to see the tiles chain'}; "Send to Claude" puts the set in your prompt.`
           : `Loaded ${tilesWhat(r.doc)}, but nothing here can show the tile editor pane (${r.why}). It needs Claude Code in a terminal or the desktop app.`) +
           (mainScreen ? MAIN_SCREEN_COMMAND : ''),
       }
@@ -615,7 +615,7 @@ export const register: Register = (on) => {
       const r = await openTiles($, tileSpecFrom(e as unknown as Record<string, unknown>))
       return {
         result: (r.isPlaced
-          ? `Opened ${tilesWhat(r.doc)} in the tile editor beside the conversation. The user edits it there; when they click "Save to prompt", the set arrives in their next message as one GRID sheet + PALETTE. Wait for it.`
+          ? `Opened ${tilesWhat(r.doc)} in the tile editor beside the conversation. The user edits it there; when they click "Send to Claude", the set arrives in their next message as one GRID sheet + PALETTE. Wait for it.`
           : `Loaded ${tilesWhat(r.doc)}, but no surface here can show the tile editor pane (${r.why}); Claude Code in a terminal or the desktop app can. Tell the user.`) +
           (await mainScreenNote($)),
       }
@@ -666,7 +666,7 @@ export const register: Register = (on) => {
             <Link href={SITE}><Text bold color={GOLD}>SpriteForge.tech</Text></Link>
             <Text dimColor> · </Text>
             <Text bold>{d.name}</Text>
-            <Text dimColor>{` ${d.kind === 'platformer' ? 49 : 16} tiles of ${d.tile}x${d.tile}${d.path ? ` · ${d.path}` : ''} · ${d.kind === 'platformer' ? 'edit the sheet or a tile' : 'paint the map, edit tiles'}, then Save to prompt`}</Text>
+            <Text dimColor>{` ${d.kind === 'platformer' ? 49 : 16} tiles of ${d.tile}x${d.tile}${d.path ? ` · ${d.path}` : ''} · ${d.kind === 'platformer' ? 'edit the sheet or a tile' : 'paint the map, edit tiles'}, then Send to Claude`}</Text>
           </Text>
         </Box>
         {onMainScreen(e) ? <Text key="tui" color={GOLD} wrap="truncate-end">{MAIN_SCREEN_HINT}</Text> : null}
@@ -681,7 +681,7 @@ export const register: Register = (on) => {
       const what = `${r.doc.name} (${r.doc.w}x${r.doc.h})`
       return {
         text: (r.isPlaced
-          ? `Opened ${what} in the pixel editor. Draw with the mouse; "Save to prompt" puts the result in your prompt.`
+          ? `Opened ${what} in the pixel editor. Draw with the mouse; "Send to Claude" puts the result in your prompt.`
           : `Loaded ${what}, but nothing here can show the editor pane (${r.why}). It needs Claude Code in a terminal or the desktop app.`) +
           (mainScreen ? MAIN_SCREEN_COMMAND : ''),
       }
@@ -696,7 +696,7 @@ export const register: Register = (on) => {
       const what = `"${r.doc.name}" (${r.doc.w}x${r.doc.h}, ${r.doc.palette.length} colours${r.doc.frames.length > 1 ? `, ${r.doc.frames.length} frames` : ''})`
       return {
         result: (r.isPlaced
-          ? `Opened ${what} in the pixel editor beside the conversation. The user edits it there; when they click "Save to prompt", the sprite arrives in their next message as a GRID + PALETTE block. Wait for it.`
+          ? `Opened ${what} in the pixel editor beside the conversation. The user edits it there; when they click "Send to Claude", the sprite arrives in their next message as a GRID + PALETTE block. Wait for it.`
           : `Loaded ${what}, but no surface here can show the editor pane (${r.why}); Claude Code in a terminal or the desktop app can. Tell the user.`) +
           (await mainScreenNote($)),
       }
@@ -716,7 +716,7 @@ export const register: Register = (on) => {
       // The tile goes back to the tile editor, if the set it came from is still the one open.
       const t = await read($, tileset)
       if (!d.back || !t || t.rev !== d.back.tilesRev || w !== t.tile || h !== t.tile) {
-        await update($, notice, (cur) => ({ id: (cur ? cur.id : 0) + 1, text: 'The tileset this tile came from is no longer open: Save to prompt instead.' }))
+        await update($, notice, (cur) => ({ id: (cur ? cur.id : 0) + 1, text: 'The tileset this tile came from is no longer open: Send to Claude instead.' }))
         return next(e)
       }
       const mask = d.back.mask

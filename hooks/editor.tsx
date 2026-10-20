@@ -7,10 +7,10 @@ import type { ClientKeyEvent, ClientModule, ClientPointerEvent, ClientSurface } 
 
 import type { DrawDoc } from '../types'
 import {
-  BACKDROPS, EDGE, EDGE_EMPTY, EMPTY, GHOST, GRID_LINE_COST, HANDLE, OVERVIEW_BUDGET, PIVOT, SOLID, canvas, chips, decodeFrame, encodeFrame, fit,
-  gridLines, overview, pixelAt, rowsShown, zoomStep,
+  BACKDROPS, EDGE, EDGE_EMPTY, EMPTY, GHOST, GRID_LINE_COST, HANDLE, OVERVIEW_BUDGET, PICK_H, PIVOT, SOLID, canvas, chips, colourNow, decodeFrame, encodeFrame, fit,
+  gridLines, overview, pickFor, pickStep, pickerHit, pickerRows, pixelAt, rowsShown, swatchAt, swatchRows, zoomStep,
 } from './pixels'
-import type { Geo, Look } from './pixels'
+import type { Geo, Look, Swatch } from './pixels'
 import {
   ANCHORS, NO_SEL, addTag, applySel, canvasSize, cel, celTool, clear, composite, copy, cropToSel, cut, delTag, deselect,
   editable, ensureColor, frameCount, frameOp, goFrame, inSel, layerOp, layerSet, lift, loadDB32, locked, nudge, nudgeHsv,
@@ -73,6 +73,7 @@ type State = Sprite & {
   pick: [number, number, number] // its hue, saturation and value, kept so a grey keeps its hue
   pickDrag: 'sv' | 'hue' | null // dragging in the square or along the hue strip
   help: boolean // the shortcut sheet
+  more: boolean // the Colour tab's less common tools: HSV steps, swatch editing, sorting, reducing, DB32
   tab: Tab
   seen: number // the last export notice shown
   tileSize: number // for a new tilemap
@@ -83,6 +84,7 @@ type Props = { doc: DrawDoc; cols: number; rows: number; notice?: Notice | null;
 const CANVAS_BUDGET = 62_000 // serialized characters for the canvas; the controls take the rest
 const PICKER_BUDGET = 26_000 // the colour picker's share of it, while it is open
 const PALETTE_SHOWN = 64
+const CHIP_COST = 330 // what a palette chip serializes to, about, so the canvas leaves room for them
 const ACCENT = '#dcb684' // the selection's edge where it crosses transparent pixels
 const BACK = '#e08a95', FWD = '#7ed08a' // onion skin: frames behind, frames ahead (Aseprite's)
 const TOOLS: [Tool, string][] = [['brush', 'Brush'], ['eraser', 'Eraser'], ['fill', 'Fill'], ['picker', 'Pick'], ['shade', 'Shade'],
@@ -95,30 +97,29 @@ const TOOL_GROUPS: Tool[][] = [['brush', 'eraser', 'fill', 'picker', 'shade'], [
 const TOOL_KEY: Partial<Record<Tool, string>> = { brush: 'B', eraser: 'E', fill: 'G', picker: 'I', shade: 'S', line: 'L', rect: 'U', ellipse: 'Shift+U',
   select: 'M', wand: 'W', lasso: 'Q', move: 'V' }
 const TOOL_HELP: Record<Tool, string> = {
-  brush: 'paints the foreground colour; right-click paints the background, Shift+click draws a line from the last point, Alt+click picks a colour',
-  eraser: 'erases to transparent',
-  fill: 'fills the area of one colour; right-click fills with transparency; Global fills every pixel of that colour',
-  picker: 'takes a colour from the canvas; right-click takes it as the background',
-  shade: 'darkens what you paint over; right-click lightens it',
-  line: 'drag from one end to the other; right-drag uses the background',
-  rect: 'drag from corner to corner; right-drag uses the background',
-  ellipse: 'drag from corner to corner; right-drag uses the background',
-  select: 'drag to select (Shift adds, right-drag takes away); drag inside to move, a corner to scale, just outside one to turn; Enter sets it down',
-  wand: 'selects the touching pixels of one colour; Shift adds, right-click takes away; arrows nudge',
-  lasso: 'draw around an area to select it; Shift adds, right-click takes away',
+  brush: 'click to paint · right-click paints the background · Shift+click draws a line · Alt+click picks a colour',
+  eraser: 'click to erase to transparent',
+  fill: 'click to fill an area of one colour · right-click fills with transparency · Global fills every pixel of that colour',
+  picker: 'click to take a colour from the canvas · right-click takes it as the background',
+  shade: 'paint to darken · right-click lightens',
+  line: 'drag from end to end · right-drag uses the background',
+  rect: 'drag from corner to corner · right-drag uses the background',
+  ellipse: 'drag from corner to corner · right-drag uses the background',
+  select: 'drag to select (Shift adds, right-drag takes away) · drag inside to move, a corner to scale, just outside to turn · Enter sets it down',
+  wand: 'click to select the touching pixels of one colour · Shift adds, right-click takes away · arrows nudge',
+  lasso: 'draw around an area to select it · Shift adds, right-click takes away',
   move: 'drag to slide the layer',
-  stamp: 'click a cell to put the picked tile there; right-click empties it',
+  stamp: 'click a cell to put the picked tile there · right-click empties it',
 }
 const SHORTCUTS = [
   'Tools: B brush · E eraser · G fill · I pick · S shade · L line · U rect · Shift+U oval · M select · W wand · Q lasso · V move',
   'Edit: Ctrl+Z undo · Ctrl+Shift+Z redo · Ctrl+C / X / V copy, cut, paste · Ctrl+A all · Ctrl+D deselect · Delete clears · Ctrl+B to brush · Shift+H / Shift+V flip',
   'View: + and - zoom · 0 fits · 1-5 zoom steps · Up / Down and Shift+Left / Right scroll · X swaps colours · [ and ] brush size · Space plays · Left / Right frames · Ctrl+S save to prompt',
 ]
-// The colour picker under the canvas, as in SpriteForge's Edit studio: a saturation (across) by value
-// (down) square over a hue strip, one cell a step, so a cell is one step to the pointer too. 40 by 9
-// cells is about the studio's shape (a cell is some 0.41 as wide as it is tall).
-const PICK_W = 40, PICK_H = 9
+// The colour picker under the canvas (pixels.tsx pickerRows), and the palette's rows under it: where
+// each starts, so a press there picks a colour.
 const pickerTop = new WeakMap<object, number>()
+const paletteAt = new WeakMap<object, { top: number; count: number; cols: number }>()
 // Where the overview of a wide sprite sits (pixels.tsx overview): a press there moves the view.
 const overviewAt = new WeakMap<object, { top: number; height: number; pw: number; step: number }>()
 const TABS: [Tab, string][] = [['colour', 'Colour'], ['canvas', 'Canvas'], ['layers', 'Layers'], ['frames', 'Frames'], ['export', 'Export']]
@@ -142,7 +143,7 @@ function fromDoc(doc: DrawDoc): State {
     brush: null, target: 'fg', outlineMode: 'tinted', darkness: 65, anchor: null, pivotMode: false,
     fps: 8, playing: false, playAt: 0, playTag: -1, onion: false, onionBack: 1, onionFwd: 0,
     drag: null, last: null, hover: null, zoom: 0, top: 0, tile3: false, left: 0, backdrop: BACKDROPS.indexOf('blank'), grid: false,
-    picker: true, pick: [0, 0, 0], pickDrag: null, help: false, tab: 'colour', seen: 0,
+    picker: true, pick: [0, 0, 0], pickDrag: null, help: false, more: false, tab: 'colour', seen: 0,
     tileSize: tileSizes(doc).includes(8) ? 8 : tileSizes(doc).filter((t) => t <= 16).pop() || 0,
   }
 }
@@ -331,6 +332,11 @@ function onPointer(surface: ClientSurface<State>, ev: ClientPointerEvent) {
   const st = surface.state, g = geometry.get(surface)
   if (!st || !g || ev.type === 'enter') return
   if (onPicker(surface, st, ev)) return
+  const pal = paletteAt.get(surface)
+  if (pal && ev.type === 'down' && !st.drag) {
+    const i = swatchAt(ev, pal.top, pal.count, pal.cols)
+    if (i >= 0) return surface.setState(pickSwatchAs(st, i, ev.button === 'right' ? 'bg' : st.target))
+  }
   const o = overviewAt.get(surface)
   if (o && ev.type === 'down' && !st.drag && ev.y >= o.top && ev.y < o.top + o.height) {
     // Centre the view on the column pressed.
@@ -594,7 +600,7 @@ function sendBack(surface: ClientSurface<State>) {
   if (!st) return
   const s = stamp(st)
   surface.post({ type: 'back', w: s.w, h: s.h, palette: s.palette, frames: [encodeFrame(composite(s, st.frame, false))] })
-  surface.setState({ ...st, note: 'Back in the tile editor: Done there keeps it.' })
+  surface.setState({ ...st, note: 'Back in the tile editor: Apply tile there keeps it.' })
 }
 
 // Asks the plugin to write a file; the layers go along for Aseprite while they fit one message.
@@ -692,43 +698,20 @@ function looks(st: State, frame: number): Look {
 
 // The picker's hue, saturation and value: those of the colour being set (the foreground, or the
 // background while BG is the target), keeping the last hue while that colour is a grey.
-function pickHsv(st: State): [number, number, number] {
-  const cur = st.target === 'bg' ? st.bg : st.fg, [h, s, v] = st.pick
-  if (!cur || hsvHex(h, s, v) === cur) return st.pick
-  const c = hexHsv(cur)
-  return [c.s > 0 ? c.h : h, c.s, c.v]
-}
+const pickHsv = (st: State): [number, number, number] => pickFor(st.target === 'bg' ? st.bg : st.fg, st.pick)
 
 // A press at step x of the square's row y, or of the hue strip, sets the colour as a swatch does.
 function pickAt(st: State, x: number, y: number | 'hue'): State {
-  let [h, s, v] = pickHsv(st)
-  const cx = Math.max(0, Math.min(PICK_W - 1, x))
-  if (y === 'hue') h = (cx / PICK_W) * 360
-  else { s = cx / (PICK_W - 1); v = 1 - Math.max(0, Math.min(PICK_H - 1, y)) / (PICK_H - 1) }
+  const [h, s, v] = pickStep(pickHsv(st), x, y)
   const hex = hsvHex(h, s, v), next: State = { ...st, pick: [h, s, v], note: '' }
   if (st.target === 'bg') return { ...next, bg: hex }
   return { ...setFg(next, hex), tool: st.tool === 'eraser' || st.tool === 'picker' ? 'brush' : st.tool }
 }
 
-// The picker's cells: the square's row by row, then the hue strip, each cell its colour; a ring marks the
-// colour now set, dark on a light cell and light on a dark one, as the studio's does.
-function pickerRows(st: State, els: ClientSurface<State>['elements'], boxes: boolean) {
-  const { Box, Text } = els
-  const [hue, s, v] = pickHsv(st)
-  const mx = Math.round(s * (PICK_W - 1)), my = Math.round((1 - v) * (PICK_H - 1)), hx = Math.floor((hue / 360) * PICK_W) % PICK_W
-  const cell = (x: number, y: number): [string, boolean, string] => y === PICK_H
-    ? [hsvHex((x / PICK_W) * 360, 1, 1), x === hx, '#ffffff']
-    : [hsvHex(hue, x / (PICK_W - 1), 1 - y / (PICK_H - 1)), x === mx && y === my, 1 - y / (PICK_H - 1) > 0.6 ? '#000000' : '#ffffff']
-  return Array.from({ length: PICK_H + 1 }, (_, y) => {
-    const cells = Array.from({ length: PICK_W }, (_, x) => {
-      const [c, mark, ring] = cell(x, y)
-      if (boxes) return <Box width={1} height={1} backgroundColor={c}>{mark ? <Text color={ring}>◆</Text> : null}</Box>
-      return mark ? <Text color={ring} backgroundColor={c}>◆</Text> : <Text color={c}>█</Text>
-    })
-    return boxes
-      ? <Box key={`p${y}`} flexDirection="row" height={1} flexShrink={0}>{cells}</Box>
-      : <Text key={`p${y}`} mono wrap="truncate-end">{cells}</Text>
-  })
+// Swatch i as the foreground (the brush comes back from the eraser or picker) or as the background.
+function pickSwatchAs(st: State, i: number, as: 'fg' | 'bg'): State {
+  const hex = st.palette[i]!, tool = st.tool === 'eraser' || st.tool === 'picker' ? 'brush' : st.tool
+  return as === 'bg' ? { ...st, bg: hex, note: '' } : { ...st, fg: hex, swatch: i, tool, note: '' }
 }
 
 // A press or drag on the picker; false when the pointer is not the picker's.
@@ -739,14 +722,15 @@ function onPicker(surface: ClientSurface<State>, st: State, ev: ClientPointerEve
     surface.setState({ ...st, pickDrag: null })
     return true
   }
-  const x = Math.floor(ev.fine ? ev.fine.x : ev.x)
   if (st.pickDrag && top !== undefined && ev.type === 'move' && ev.button) {
+    const x = Math.floor(ev.fine ? ev.fine.x : ev.x)
     surface.setState({ ...pickAt(st, x, st.pickDrag === 'hue' ? 'hue' : ev.y - top), pickDrag: st.pickDrag })
     return true
   }
-  if (top === undefined || ev.type !== 'down' || st.drag || ev.y < top || ev.y > top + PICK_H || x >= PICK_W) return false
-  const on = ev.y === top + PICK_H ? 'hue' : 'sv'
-  surface.setState({ ...pickAt(st, x, on === 'hue' ? 'hue' : ev.y - top), pickDrag: on })
+  if (top === undefined || ev.type !== 'down' || st.drag) return false
+  const hit = pickerHit(ev, top)
+  if (!hit) return false
+  surface.setState({ ...pickAt(st, hit.x, hit.y), pickDrag: hit.on })
   return true
 }
 
@@ -789,7 +773,8 @@ const Editor: ClientModule<Props, State> = (props, surface) => {
   // The desktop draws the grid as hairlines over the pixels, the terminal as a tint (pixels.tsx).
   const lined = st.grid && boxes && !f.half, across = span < dw, look = looks({ ...st, tile3: tile }, shownFrame)
   const drawn = canvas(look, dw, dh, f, top, surface.elements,
-    CANVAS_BUDGET - (lined ? GRID_LINE_COST * (span + f.visible + 2) : 0) - (showPicker ? PICKER_BUDGET : 0) - (across && boxes ? OVERVIEW_BUDGET : 0),
+    CANVAS_BUDGET - (lined ? GRID_LINE_COST * (span + f.visible + 2) : 0) - (showPicker ? PICKER_BUDGET : 0) - (across && boxes ? OVERVIEW_BUDGET : 0) -
+      CHIP_COST * Math.min(st.palette.length, PALETTE_SHOWN),
     { backdrop: st.backdrop, grid: st.grid && !boxes, boxes, left })
   const g: Geo = { ...f, top, left, across: dw, sideways: boxes, bands: drawn.bands, rows: drawn.bands * f.bandRows }
   geometry.set(surface, g)
@@ -799,18 +784,23 @@ const Editor: ClientModule<Props, State> = (props, surface) => {
   const ov = across && boxes ? overview(look, dw, dh, cols, left, span, surface.elements) : null
   if (ov) overviewAt.set(surface, { top: g.rows + 1, height: ov.height, pw: ov.pw, step: ov.step })
   else overviewAt.delete(surface)
-  const picker = showPicker ? pickerRows(st, surface.elements, boxes) : null
-  if (picker) pickerTop.set(surface, g.rows + 1 + (ov ? ov.height + 1 : 0))
+  const picker = showPicker ? pickerRows(surface.elements, boxes, pickHsv(st)) : null
+  const underCanvas = g.rows + 1 + (ov ? ov.height + 1 : 0)
+  if (picker) pickerTop.set(surface, underCanvas)
   else pickerTop.delete(surface)
   const scrolls = g.bands < g.total
   const set = (fn: (s: State) => State) => () => { if (surface.state) surface.setState(fn(surface.state)) }
   const L = st.layers[st.layer]!, nl = st.layers.length, s = st.sel, t = st.tool, tm = tilemap(st)
   const chip = (hex: string | null) => (hex ? <Text color={hex}>██</Text> : <Text dimColor>··</Text>)
   const fgAt = st.palette.indexOf(st.fg), bgAt = st.bg ? st.palette.indexOf(st.bg) : -1
-  const pickSwatch = (i: number) => set((x) => {
-    const hex = x.palette[i]!, tool = x.tool === 'eraser' || x.tool === 'picker' ? 'brush' : x.tool
-    return x.target === 'bg' ? { ...x, bg: hex, note: '' } : { ...x, fg: hex, swatch: i, tool, note: '' }
+  const pickSwatch = (i: number) => set((x) => pickSwatchAs(x, i, x.target))
+  // The palette's chips, in rows under the picker (or the canvas); a press anywhere on one picks it.
+  const swatches: Swatch[] = st.palette.slice(0, PALETTE_SHOWN).map((c, i) => {
+    const mark = i === fgAt ? '[]' : i === bgAt ? '()' : i === st!.swatch ? '{}' : ''
+    return { hex: c, label: mark ? `${mark[0]}${i + 1}${mark[1]}` : `${i + 1}`, lit: i === fgAt, onPress: pickSwatch(i) }
   })
+  const paletteRows = swatchRows(surface.elements, boxes, swatches, cols)
+  paletteAt.set(surface, { top: picker ? underCanvas + PICK_H + 2 : underCanvas, count: swatches.length, cols })
   const hsv = (ch: 'h' | 's' | 'v', by: number) => set((x) => {
     if (x.target === 'fg') return nudgeHsv(x, ch, by)
     if (!x.bg) return { ...x, note: 'The background is transparent: pick a colour for it first.' }
@@ -871,13 +861,8 @@ const Editor: ClientModule<Props, State> = (props, surface) => {
         <Button key="picker" label="Picker" variant={st.picker ? 'primary' : 'secondary'}
           onPress={set((x) => ({ ...x, picker: !x.picker, pickDrag: null, pick: pickHsv(x), note: x.picker ? 'The picker is hidden; press Picker to show it again.' : `The picker under the canvas sets the ${x.target === 'bg' ? 'background' : 'foreground'}: the square is saturation and brightness, the strip under it the hue.` }))} />
         <Button key="swap" label="Swap" onPress={set(swapColors)} />
-        <Button key="bg-none" label="BG none" onPress={set((x) => ({ ...x, bg: null, note: 'Background set to transparent.' }))} />
-        <Button key="h-dn" label="H-" onPress={hsv('h', -15)} />
-        <Button key="h-up" label="H+" onPress={hsv('h', 15)} />
-        <Button key="s-dn" label="S-" onPress={hsv('s', -0.1)} />
-        <Button key="s-up" label="S+" onPress={hsv('s', 0.1)} />
-        <Button key="v-dn" label="V-" onPress={hsv('v', -0.1)} />
-        <Button key="v-up" label="V+" onPress={hsv('v', 0.1)} />
+        <Button key="bg-none" label="No background" onPress={set((x) => ({ ...x, bg: null, note: 'Background set to transparent.' }))} />
+        <Button key="col-more" label={st.more ? 'Fewer' : 'More'} variant={st.more ? 'primary' : 'secondary'} onPress={set((x) => ({ ...x, more: !x.more }))} />
       </Box>,
       <Box key="col-b" flexWrap="wrap" columnGap={1}>
         <Input key="hex" label="Colour " placeholder="#rrggbb" submitLabel="set" onSubmit={(value) => {
@@ -887,21 +872,37 @@ const Editor: ClientModule<Props, State> = (props, surface) => {
           if (!/^#[0-9a-f]{6}$/.test(v)) return surface.setState({ ...x, note: `"${value.trim()}" isn't a colour like #a1b2c3.` })
           surface.setState(x.target === 'bg' ? { ...x, bg: v, note: '' } : setFg(x, v))
         }} />
-        <Button key="pal-add" label="Add" onPress={set(palAdd)} />
-        <Button key="pal-remove" label="Remove" onPress={set(palRemove)} />
-        <Button key="live" label="Edit swatch" variant={st.liveSwatch ? 'primary' : 'secondary'}
-          onPress={set((x) => ({ ...x, liveSwatch: !x.liveSwatch, target: 'fg', note: x.liveSwatch ? '' : x.swatch >= 0 ? `Colour changes now rewrite swatch ${x.swatch + 1} everywhere.` : 'Click a swatch first.' }))} />
-        <Button key="pal-sort" label="Sort" onPress={set(palSort)} />
-        <Button key="db32" label="DB32" onPress={set(loadDB32)} />
-      </Box>,
-      <Box key="col-c" flexWrap="wrap" columnGap={1}>
-        <Button key="reduce" label={`Reduce to ${st.reduceN}`} onPress={set(palReduce)} />
-        <Button key="reduce-dn" label="‹" onPress={set((x) => ({ ...x, reduceN: Math.max(2, x.reduceN - 1) }))} />
-        <Button key="reduce-up" label="›" onPress={set((x) => ({ ...x, reduceN: Math.min(64, x.reduceN + 1) }))} />
-        {st.reduceFrom && <Button key="reduce-keep" label="Keep" variant="primary" onPress={set(palKeep)} />}
-        {st.reduceFrom && <Button key="reduce-revert" label="Revert" onPress={set(palRevert)} />}
+        <Button key="pal-add" label="Add to palette" onPress={set(palAdd)} />
         <Text key="lint" dimColor>{lint(st)}</Text>
       </Box>,
+      // More: nudging hue, saturation and brightness, editing a swatch in place, the palette's own tools.
+      ...(st.more || st.reduceFrom ? [
+        <Box key="col-hsv" flexWrap="wrap" columnGap={1}>
+          <Text dimColor>hue</Text>
+          <Button key="h-dn" label="H-" onPress={hsv('h', -15)} />
+          <Button key="h-up" label="H+" onPress={hsv('h', 15)} />
+          <Text dimColor>saturation</Text>
+          <Button key="s-dn" label="S-" onPress={hsv('s', -0.1)} />
+          <Button key="s-up" label="S+" onPress={hsv('s', 0.1)} />
+          <Text dimColor>brightness</Text>
+          <Button key="v-dn" label="V-" onPress={hsv('v', -0.1)} />
+          <Button key="v-up" label="V+" onPress={hsv('v', 0.1)} />
+        </Box>,
+        <Box key="col-pal" flexWrap="wrap" columnGap={1}>
+          <Button key="pal-remove" label="Remove swatch" onPress={set(palRemove)} />
+          <Button key="live" label="Edit swatch" variant={st.liveSwatch ? 'primary' : 'secondary'}
+            onPress={set((x) => ({ ...x, liveSwatch: !x.liveSwatch, target: 'fg', note: x.liveSwatch ? '' : x.swatch >= 0 ? `Colour changes now rewrite swatch ${x.swatch + 1} everywhere.` : 'Click a swatch first.' }))} />
+          <Button key="pal-sort" label="Sort" onPress={set(palSort)} />
+          <Button key="db32" label="DB32 palette" onPress={set(loadDB32)} />
+        </Box>,
+        <Box key="col-c" flexWrap="wrap" columnGap={1}>
+          <Button key="reduce" label={`Reduce to ${st.reduceN} colours`} onPress={set(palReduce)} />
+          <Button key="reduce-dn" label="‹" onPress={set((x) => ({ ...x, reduceN: Math.max(2, x.reduceN - 1) }))} />
+          <Button key="reduce-up" label="›" onPress={set((x) => ({ ...x, reduceN: Math.min(64, x.reduceN + 1) }))} />
+          {st.reduceFrom && <Button key="reduce-keep" label="Keep" variant="primary" onPress={set(palKeep)} />}
+          {st.reduceFrom && <Button key="reduce-revert" label="Revert" onPress={set(palRevert)} />}
+        </Box>,
+      ] : []),
     ]
   } else if (st.tab === 'canvas') {
     const anchor = st.anchor || suggestAnchor(st)
@@ -1021,7 +1022,7 @@ const Editor: ClientModule<Props, State> = (props, surface) => {
         {EXPORTS.map(([fmt, label]) => <Button key={`export-${fmt}`} label={label} onPress={() => exportAs(surface, fmt)} />)}
       </Box>,
       <Text key="ex-b" dimColor wrap="wrap">
-        PNG at 1x or 8x, a sheet of every frame in a row, a looping GIF, each frame as an 8x PNG, Aseprite (layers and frames) or the text grid: written beside the sprite, never over a file that is there. Save to prompt hands the pixels to Claude.
+        PNG at 1x or 8x, a sheet of every frame in a row, a looping GIF, each frame as an 8x PNG, Aseprite (layers and frames) or the text grid: written beside the sprite, never over a file that is there. Send to Claude hands the pixels to Claude.
       </Text>,
     ]
   }
@@ -1041,22 +1042,14 @@ const Editor: ClientModule<Props, State> = (props, surface) => {
       <Box key="canvas" flexDirection="column">{drawn.rows}{grid}</Box>
       {ov && <Box key="overview" flexDirection="column" marginTop={1} height={ov.height} overflow="hidden">{ov.rows}</Box>}
       {picker && <Box key="picker" flexDirection="column" marginTop={1}>{picker}</Box>}
-      <Box key="palette" flexWrap="wrap" marginTop={1}>
-        {/* Each chip sits beside its Button, not in it: the desktop draws a Button's Text children in its own colour. */}
-        {st.palette.slice(0, PALETTE_SHOWN).map((c, i) => {
-          const mark = i === fgAt ? '[]' : i === bgAt ? '()' : i === st!.swatch ? '{}' : ''
-          return (
-            <Box key={`swatch-${i}`} marginRight={1}>
-              <Text color={c}>██</Text>
-              <Button key={`c${i}`} plain label={mark ? `${mark[0]}${i + 1}${mark[1]}` : `${i + 1}`} onPress={pickSwatch(i)} />
-            </Box>
-          )
-        })}
-        {st.palette.length > PALETTE_SHOWN && <Text dimColor>{` +${st.palette.length - PALETTE_SHOWN} more (Pick takes any)`}</Text>}
+      <Box key="palette" flexDirection="column" marginTop={1}>
+        {paletteRows}
+        {st.palette.length > PALETTE_SHOWN && <Text dimColor>{`+${st.palette.length - PALETTE_SHOWN} more (Pick takes any)`}</Text>}
         {!st.palette.length && <Text dimColor>No colours yet: set one under Colour.</Text>}
       </Box>
       {/* Tools in groups (paint, shapes, select); then what the chosen one does and its options. */}
       <Box key="tools" flexWrap="wrap" columnGap={2} marginTop={1}>
+        {colourNow(surface.elements, boxes, t === 'eraser' ? null : st.fg)}
         {TOOL_GROUPS.map((grp, gi) => (
           <Box key={`tools-${gi}`} flexWrap="wrap" columnGap="xs">
             {grp.map(toolChip)}
@@ -1068,6 +1061,10 @@ const Editor: ClientModule<Props, State> = (props, surface) => {
       {options.length > 0 && <Box key="opts" flexWrap="wrap" columnGap={1}>{options}</Box>}
       {/* History, view and the way out; then the panels. */}
       <Box key="main" flexWrap="wrap" columnGap={2} marginTop={1}>
+        <Box key="out" columnGap="xs">
+          {props.doc.back && <Button key="back" label="Back to tiles" variant="primary" onPress={() => sendBack(surface)} />}
+          <Button key="save" label="Send to Claude" variant={props.doc.back ? 'secondary' : 'primary'} onPress={() => save(surface)} />
+        </Box>
         <Box key="history" columnGap="xs">
           <Button key="undo" label="Undo" onPress={set((x) => restore(x, 'undo'))} />
           <Button key="redo" label="Redo" onPress={set((x) => restore(x, 'redo'))} />
@@ -1081,11 +1078,7 @@ const Editor: ClientModule<Props, State> = (props, surface) => {
           {across && <Button key="left" label="◀" onPress={() => scrollX(surface, -Math.max(1, Math.floor(span / 2)))} />}
           {across && <Button key="right" label="▶" onPress={() => scrollX(surface, Math.max(1, Math.floor(span / 2)))} />}
         </Box>
-        <Box key="out" columnGap="xs">
-          <Button key="help" label="Keys" variant={st.help ? 'primary' : 'secondary'} onPress={set((x) => ({ ...x, help: !x.help }))} />
-          {props.doc.back && <Button key="back" label="Back to tiles" variant="primary" onPress={() => sendBack(surface)} />}
-          <Button key="save" label="Save to prompt" variant={props.doc.back ? 'secondary' : 'primary'} onPress={() => save(surface)} />
-        </Box>
+        <Button key="help" label="Keys" variant={st.help ? 'primary' : 'secondary'} onPress={set((x) => ({ ...x, help: !x.help }))} />
       </Box>
       {st.help && <Box key="keys" flexDirection="column">{SHORTCUTS.map((line, i) => <Text key={`keys-${i}`} dimColor wrap="wrap">{line}</Text>)}</Box>}
       <Box key="tabs" flexWrap="wrap" columnGap="xs" marginTop={1}>

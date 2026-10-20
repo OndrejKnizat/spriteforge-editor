@@ -175,6 +175,63 @@ describe('tile editor pane', () => {
     expect(await ui.find({ in: 'tiles', type: 'Text', text: /^edit pixels #111111 · / })).toBeDefined()
   })
 
+  test('palette chips take a press anywhere; the picker adds the colour it lands on when the press ends', async ($, on) => {
+    host(on)
+    const palette = ['#111111', '#eeeeee']
+    await $.tool.call({ tool: TOOL, palette, base: [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]], name: 'flat' })
+    const ui = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', component: 'Pane', requestId: PANE, props: pane(80, 40), viewport: { columns: 80, rows: 40 } })
+    await ui.resize({ columns: 78, rows: 30, in: 'tiles' })
+    const press = async (x: number, y: number) => {
+      await ui.pointer({ type: 'down', x, y, button: 'left', in: 'tiles' })
+      await ui.pointer({ type: 'up', x, y, button: 'left', in: 'tiles' })
+    }
+    const status = (re: RegExp) => ui.find({ in: 'tiles', type: 'Text', text: re })
+    // Three map cells, as in the test above, so Edit pixels has tiles to draw in.
+    await ui.press({ key: 'clear' })
+    for (const [cx, cy] of [[1, 1], [2, 1], [1, 2]]) await press(cx! * 16 + 1, cy! * 8 + 1)
+    // Painting map cells needs no colour: no picker, and the palette right under the 24-row map.
+    expect(await ui.find({ in: 'tiles', type: 'Text', text: '◆' })).toBeUndefined()
+    await press(7, 25) // chip 2's colour
+    // The tiles' thumbnails sit under the palette (2 colours: one row) - 13 of 6 columns a row; a
+    // press on a thumbnail opens its tile, Discard comes back.
+    await press(8 * 6 + 1, 27)
+    expect(await status(/^Tile 8: drawn where SE is painted/)).toBeDefined()
+    await ui.press({ key: 'cancel' })
+    expect(await status(/^Changes discarded\./)).toBeDefined()
+    await ui.press({ key: 'm-pixels' })
+    expect(await status(/^edit pixels #eeeeee · /)).toBeDefined()
+    // Edit pixels: 24 canvas rows, the picker from row 25 (9 rows of square, then the hue strip),
+    // the palette two rows under it.
+    const pick = 25, pal = pick + 9 + 2
+    await press(0, pal)
+    expect(await status(/^edit pixels #111111 · /)).toBeDefined()
+    await press(39, pick) // the square's top right: the grey's hue kept, full saturation and value
+    expect(await status(/^edit pixels #ff0000 · /)).toBeDefined()
+    expect(await ui.find({ in: 'tiles', key: 'c2' })).toBeDefined()
+    // A drag along the strip shows its colour as it goes and adds only the one it ends on.
+    await ui.pointer({ type: 'down', x: 0, y: pick + 9, button: 'left', in: 'tiles' })
+    await ui.pointer({ type: 'move', x: 20, y: pick + 3, button: 'left', in: 'tiles' })
+    expect(await status(/^Picking #00ffff: let go to use it\./)).toBeDefined()
+    expect(await ui.find({ in: 'tiles', key: 'c3' })).toBeUndefined()
+    await ui.pointer({ type: 'up', x: 20, y: pick + 3, button: 'left', in: 'tiles' })
+    expect(await status(/^edit pixels #00ffff · /)).toBeDefined()
+    // No pixel had the red yet, so trying another colour retuned that swatch instead of adding one.
+    expect(await ui.find({ in: 'tiles', key: 'c3' })).toBeUndefined()
+    // Once a pixel has it, the next pick is a new colour.
+    await press(37, 7) // a pixel of tile 7, where the painted cells meet
+    await press(0, pick + 8) // the square's bottom left: black
+    expect(await status(/^edit pixels #000000 · /)).toBeDefined()
+    expect(await ui.find({ in: 'tiles', key: 'c3' })).toBeDefined()
+    // Picker hides it; the palette moves back under the canvas. A tile's own editor shows it too.
+    await ui.press({ key: 'picker' })
+    expect(await ui.find({ in: 'tiles', type: 'Text', text: '◆' })).toBeUndefined()
+    await press(0, 25)
+    expect(await status(/^edit pixels #111111 · /)).toBeDefined()
+    await ui.press({ key: 'picker' })
+    await ui.press({ key: 'tile-15' })
+    expect(await ui.find({ in: 'tiles', type: 'Text', text: '◆' })).toBeDefined()
+  })
+
   test('Edit pixels on big tiles shows the painted cells, not the corner of the map', async ($, on) => {
     const filled = host(on)
     const palette = ['#111111', '#eeeeee'], base = new Array(32 * 32).fill(0)
@@ -232,7 +289,7 @@ describe('tile editor pane', () => {
       flood(drawn, 4, 4, 4, 1)
       // The base, with its seams brought to the middle: its pixel (0,0) is then the texture's (2,2).
       await ui.press({ key: 'base' })
-      expect(await ui.find({ in: 'tiles', type: 'Text', text: /^Base texture: Done derives/ })).toBeDefined()
+      expect(await ui.find({ in: 'tiles', type: 'Text', text: /^Base texture: Apply texture derives/ })).toBeDefined()
       await ui.press({ key: 'offset' })
       await ui.press({ key: 't-brush' })
       await click(px(0, 0))
@@ -409,7 +466,7 @@ describe('tile editor pane', () => {
     await draw.pointer({ type: 'down', x: 1, y: 1, button: 'left', in: 'editor' })
     await draw.pointer({ type: 'up', x: 1, y: 1, button: 'left', in: 'editor' })
     await draw.press({ key: 'back' })
-    expect(await tiles.find({ in: 'tiles', type: 'Text', text: /Tile 3 is back from the pixel editor: Done keeps it/ })).toBeDefined()
+    expect(await tiles.find({ in: 'tiles', type: 'Text', text: /Tile 3 is back from the pixel editor: Apply tile keeps it/ })).toBeDefined()
     await tiles.press({ key: 'done' })
     await tiles.press({ key: 'save' })
     const text = filled[0]!.text, pal = Object.fromEntries(text.split('PALETTE\n')[1]!.trim().split('\n').map((l) => l.split('=').reverse() as [string, string]))
@@ -482,7 +539,7 @@ describe('tile editor pane', () => {
     await ui.press({ key: 'tile-15' })
     await ui.press({ key: 'c1' })
     // 2 columns a pixel: 19 of the 32 across.
-    expect(await status(/^Tile 15: .* · rows 1-29 \(Up\/Down\) · columns 1-19 of 32 \(click the overview, Shift\+Left\/Right\) · Enter is Done/)).toBeDefined()
+    expect(await status(/^Tile 15: .* · rows 1-29 \(Up\/Down\) · columns 1-19 of 32 \(click the overview, Shift\+Left\/Right\) · Enter applies/)).toBeDefined()
     await ui.press({ key: 'right' })
     expect(await status(/columns 10-28 of 32/)).toBeDefined()
     await ui.pointer({ type: 'down', x: 1, y: 3, button: 'left', in: 'tiles' }) // pixel (9, 3)
@@ -511,24 +568,24 @@ describe('tile editor pane', () => {
     await ui.unmount()
   })
 
-  test("the toolbar: the tile picker's glyphs beside their buttons, Grid as hairlines or a tint, a help line and Keys", async ($, on) => {
+  test("the toolbar: tile thumbnails with their buttons, Grid as hairlines or a tint, a help line and Keys", async ($, on) => {
     host(on)
     await run($, '8')
     for (const surface of SURFACES) {
       const ui = await $.ui.mount({ plugin: PLUGIN, surface, component: 'Pane', requestId: PANE, props: pane(80, 40), viewport: { columns: 80, rows: 40 } })
       await ui.resize({ columns: 78, rows: 30, in: 'tiles' })
-      // The desktop draws a Button's children in its own colour, so each tile's coloured glyph is a
-      // Text beside its Button, whose label is the tile's number.
+      // Each tile is a thumbnail of its four corners (tile 8: only its SE corner is painted) over its
+      // Button, whose label is the tile's number (the desktop draws a Button's children in its own colour).
       const chip = (await ui.find({ in: 'tiles', key: 'tile-chip-8' }))!
-      const [glyph, button] = chip.children as { type: string; props: Record<string, unknown>; children?: unknown[] }[]
-      expect(glyph!.type).toBe('Text')
-      expect(glyph!.children).toEqual(['▗'])
-      expect(glyph!.props.color).toMatch(/^#[0-9a-f]{6}$/)
+      const [top, bottom, button] = chip.children as { type: string; props: Record<string, unknown>; children?: unknown[] }[]
+      const corners = (row: typeof top) => JSON.stringify(row).match(/#[0-9a-f]{6}/g) || []
+      expect(corners(top).every((c) => c === '#2a2925')).toBe(true) // NW and NE: empty
+      expect(corners(bottom).filter((c) => c !== '#2a2925').length).toBeGreaterThan(0) // SE: grass
       expect(button!.type).toBe('Button')
       expect(button!.props.key).toBe('tile-8')
       expect(button!.props.label).toBe('8')
       expect((button!.children || []).filter((c) => typeof c !== 'string')).toHaveLength(0)
-      expect(await ui.find({ in: 'tiles', type: 'Text', text: /^Paint map \(M\): click or drag cells to paint them/ })).toBeDefined()
+      expect(await ui.find({ in: 'tiles', type: 'Text', text: /^Paint map \(M\): click or drag to paint terrain/ })).toBeDefined()
       // Grid: hairlines over the desktop's pixels (absolute Boxes); a tint and a checker on the terminal.
       const lines = async () => (await ui.findAll({ in: 'tiles', type: 'Box' })).filter((b) => b.props.position === 'absolute').length
       const checker = async () => JSON.stringify(await ui.find({ in: 'tiles', key: 'canvas' })).includes('░')
@@ -548,11 +605,11 @@ describe('tile editor pane', () => {
       // A tile: its tools in a group, and the line under them says what the chosen one does.
       await ui.press({ key: 'tile-8' })
       expect(await ui.find({ in: 'tiles', key: 'tools-0' })).toBeDefined()
-      expect(await ui.find({ in: 'tiles', type: 'Text', text: /^Brush \(B\): paints the chosen colour; right-click erases/ })).toBeDefined()
+      expect(await ui.find({ in: 'tiles', type: 'Text', text: /^Brush \(B\): click to paint · right-click erases/ })).toBeDefined()
       await ui.press({ key: 't-fill' })
-      expect(await ui.find({ in: 'tiles', type: 'Text', text: /^Fill \(G\): fills the area of one colour/ })).toBeDefined()
+      expect(await ui.find({ in: 'tiles', type: 'Text', text: /^Fill \(G\): click to fill an area of one colour/ })).toBeDefined()
       await ui.key({ key: 'i', in: 'tiles' })
-      expect(await ui.find({ in: 'tiles', type: 'Text', text: /^Pick \(I\): takes a colour from the tile/ })).toBeDefined()
+      expect(await ui.find({ in: 'tiles', type: 'Text', text: /^Pick \(I\): click to take a colour from the tile/ })).toBeDefined()
       // The grid stays on in the tile: 8x8 at 3x, 9 lines across and one row of the 9 down.
       if (surface === 'desktop') expect(await lines()).toBe(1 + 9)
       await ui.press({ key: 'help' })
