@@ -17,7 +17,7 @@ import type { ClientKeyEvent, ClientModule, ClientPointerEvent, ClientSurface } 
 
 import type { TileDoc } from '../types'
 import {
-  EMPTY, GRID_LINE_COST, OVERVIEW_BUDGET, SHADE, SOLID, canvas, chips, decodeFrame, encodeFrame, fit, flood, gridLines, line, overview, pixelAt,
+  BACKDROPS, EMPTY, GRID_LINE_COST, OVERVIEW_BUDGET, SHADE, SOLID, canvas, chips, decodeFrame, encodeFrame, fit, flood, gridLines, line, overview, pixelAt,
   rowsShown, zoomStep,
 } from './pixels'
 import type { Fit, Geo, Look } from './pixels'
@@ -651,7 +651,8 @@ const Tiles: ClientModule<Props, State> = (props, surface) => {
   const lined = st.grid && boxes && !f.half, across = span < dw
   const drawn = canvas(look, dw, dhigh, f, top, surface.elements,
     CANVAS_BUDGET - (lined ? GRID_LINE_COST * (span + f.visible + 2) : 0) - (across && boxes ? OVERVIEW_BUDGET : 0),
-    { boxes, grid: st.grid && !boxes, left })
+    // Empty map space stays blank, as the pixel pane's default backdrop does (no dots).
+    { boxes, grid: st.grid && !boxes, left, backdrop: BACKDROPS.indexOf('blank') })
   const g: Drawn = { ...f, top, left, across: dw, sideways: boxes, bands: drawn.bands, rows: drawn.bands * f.bandRows, plan: p, dw, dh: dhigh, view: e ? 'flat' : view, s, W, H }
   geometry.set(surface, g)
   const grid = lined ? gridLines(surface.elements, g, span) : []
