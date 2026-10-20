@@ -702,8 +702,8 @@ const pickHsv = (st: State): [number, number, number] => pickFor(st.target === '
 
 // A press at step x of the square's row y, or of the hue strip, sets the colour as a swatch does.
 function pickAt(st: State, x: number, y: number | 'hue'): State {
-  const [h, s, v] = pickStep(pickHsv(st), x, y)
-  const hex = hsvHex(h, s, v), next: State = { ...st, pick: [h, s, v], note: '' }
+  const [hue, s, v] = pickStep(pickHsv(st), x, y)
+  const hex = hsvHex(hue, s, v), next: State = { ...st, pick: [hue, s, v], note: '' }
   if (st.target === 'bg') return { ...next, bg: hex }
   return { ...setFg(next, hex), tool: st.tool === 'eraser' || st.tool === 'picker' ? 'brush' : st.tool }
 }
@@ -844,7 +844,7 @@ const Editor: ClientModule<Props, State> = (props, surface) => {
     : []
   const toolName = (tl: Tool) => (TOOLS.find(([k]) => k === tl) || [tl, 'Stamp'])[1]
   const toolChip = (tl: Tool) => <Button key={`t-${tl}`} label={toolName(tl)} variant={t === tl ? 'primary' : 'secondary'} onPress={set((x) => setTool(x, tl))} />
-  const sizeInput = (key: string, label: string, placeholder: string, submitLabel: string, apply: (x: State, w: number, h: number) => State) => (
+  const sizeInput = (key: string, label: string, placeholder: string, submitLabel: string, apply: (x: State, w: number, ht: number) => State) => (
     <Input key={key} label={label} placeholder={placeholder} submitLabel={submitLabel} onSubmit={(value) => {
       const x = surface.state
       if (!x) return
@@ -908,7 +908,7 @@ const Editor: ClientModule<Props, State> = (props, surface) => {
     const anchor = st.anchor || suggestAnchor(st)
     tabBody = [
       <Box key="cv-a" flexWrap="wrap" columnGap={1}>
-        {sizeInput('canvas-size', 'Canvas ', `${st.w}x${st.h}`, 'resize, no scaling', (x, w, h) => ({ ...canvasSize(x, w, h, x.anchor || suggestAnchor(x)), anchor: null }))}
+        {sizeInput('canvas-size', 'Canvas ', `${st.w}x${st.h}`, 'resize, no scaling', (x, w, ht) => ({ ...canvasSize(x, w, ht, x.anchor || suggestAnchor(x)), anchor: null }))}
         <Select key="anchor" label="anchor " value={anchor === 'fit' ? 'fit' : String(anchor[1] * 3 + anchor[0])}
           options={[...ANCHORS.map((a, i) => ({ value: String(i), label: a })), { value: 'fit', label: 'centre the content' }]}
           onSelect={(v) => { const x = surface.state; if (x) surface.setState({ ...x, anchor: v === 'fit' ? 'fit' : [Number(v) % 3, Math.floor(Number(v) / 3)] }) }} />

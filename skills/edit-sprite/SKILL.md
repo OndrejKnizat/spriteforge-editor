@@ -61,7 +61,7 @@ yet - say so rather than shrinking them.
 
    The JSON response carries `id`, `editUrl` and `pngUrl`. Name the session after the file, using
    only letters, digits, `-` and `_` in `name=`. Keep file paths in single quotes as shown, so a file
-   name with `$`, backticks or spaces stays literal (write a single quote inside one as `'\''`).
+   name with dollar signs, backticks or spaces stays literal (write a single quote inside one as `'\''`).
 
 2. Give the user the `editUrl` and ask them to tell you when they're done. Open it in their browser
    (`open` on macOS, `xdg-open` on Linux) only if they ask; on a remote or cloud machine, just share

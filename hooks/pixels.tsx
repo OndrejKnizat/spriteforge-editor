@@ -10,6 +10,7 @@
 // per few pixels, so `canvas` draws the rows ("bands") that fit both the pane and a size budget,
 // from `top`, and the pane scrolls when that is not all of them.
 import type { ClientPointerEvent, ClientSurface } from 'claude-code'
+import type { Size } from './shapes'
 import { hexHsv, hsvHex, lum, mixHex } from './tools'
 
 // A band is one pixel row (block mode, z cell rows tall) or two (half mode, one cell row). `cw`: the
@@ -70,7 +71,7 @@ export const cellWidth = (z: number, square: boolean) => (square ? r3(z / CELL_A
 
 // `sideways` (the desktop): never half blocks, whose lower pixel only a terminal reporting positions
 // inside a cell can reach; a picture too wide for the pane keeps full-size pixels and scrolls across.
-export function fit(st: { w: number; h: number; zoom: number }, cols: number, rows: number, sideways = false, square = false): Fit {
+export function fit(st: Size & { zoom: number }, cols: number, rows: number, sideways = false, square = false): Fit {
   const room = Math.max(4, rows)
   const half = (): Fit => ({ half: true, z: 1, bandRows: 1, total: Math.ceil(st.h / 2), visible: Math.min(Math.ceil(st.h / 2), room), span: st.w, cw: 1 })
   const block = (z: number): Fit => {
@@ -86,7 +87,7 @@ export function fit(st: { w: number; h: number; zoom: number }, cols: number, ro
   return cellWidth(1, square) * st.w <= cols || sideways ? block(1) : half()
 }
 
-export function pixelAt(ev: ClientPointerEvent, g: Geo, st: { w: number; h: number }, clamp: boolean): [number, number] | null {
+export function pixelAt(ev: ClientPointerEvent, g: Geo, st: Size, clamp: boolean): [number, number] | null {
   const fx = ev.fine ? ev.fine.x : ev.x, fy = ev.fine ? ev.fine.y : ev.y
   let band = Math.floor(fy / g.bandRows)
   if (clamp) band = Math.max(0, Math.min(g.bands - 1, band))
@@ -121,7 +122,7 @@ export function line(x0: number, y0: number, x1: number, y1: number, put: Put) {
   }
 }
 
-export function flood(d: number[], w: number, h: number, start: number, v: number) {
+export function flood(d: number[], w: number, ht: number, start: number, v: number) {
   const from = d[start]!
   if (from === v) return
   const stack = [start]
@@ -133,7 +134,7 @@ export function flood(d: number[], w: number, h: number, start: number, v: numbe
     if (px > 0) stack.push(i - 1)
     if (px < w - 1) stack.push(i + 1)
     if (py > 0) stack.push(i - w)
-    if (py < h - 1) stack.push(i + w)
+    if (py < ht - 1) stack.push(i + w)
   }
 }
 
@@ -360,18 +361,18 @@ export const PICK_W = 40, PICK_H = 9
 export type Hsv = [number, number, number]
 // The picker's hue, saturation and value for colour `cur`, keeping the last hue while `cur` is a grey.
 export function pickFor(cur: string | null, pick: Hsv): Hsv {
-  const [h] = pick
+  const [hue] = pick
   if (!cur || hsvHex(pick[0], pick[1], pick[2]) === cur) return pick
   const c = hexHsv(cur)
-  return [c.s > 0 ? c.h : h, c.s, c.v]
+  return [c.s > 0 ? c.h : hue, c.s, c.v]
 }
 // A press at step x of the square's row y, or of the hue strip.
 export function pickStep(hsv: Hsv, x: number, y: number | 'hue'): Hsv {
-  let [h, s, v] = hsv
+  let [hue, s, v] = hsv
   const cx = Math.max(0, Math.min(PICK_W - 1, x))
-  if (y === 'hue') h = (cx / PICK_W) * 360
+  if (y === 'hue') hue = (cx / PICK_W) * 360
   else { s = cx / (PICK_W - 1); v = 1 - Math.max(0, Math.min(PICK_H - 1, y)) / (PICK_H - 1) }
-  return [h, s, v]
+  return [hue, s, v]
 }
 // The picker's cells, the square row by row and then the hue strip; a ring marks the colour now set,
 // dark on a light cell and light on a dark one, as the studio's does.

@@ -162,6 +162,37 @@ In the editor:
 Limits: edit links take PNGs up to 128x128 pixels and 256 colours, the panes up to 64x64; pixels under
 50% opacity become transparent.
 
+## What the Claude Code mod does
+
+The panes are a Claude Code mod (`hooks/`). Everything it can do:
+
+- **Tools it adds:** `open_pixel_editor` and `open_tile_editor` open the panes; `enter_fullscreen` only
+  schedules the switch below. The mod answers these three itself; they reach no server.
+- **Commands it adds:** `/spriteforge-draw` and `/spriteforge-tiles` open the panes.
+- **Hooks:** `session.start` registers the tools and commands; `tool.call` and `command.run` on its own
+  tools and commands only; `ui.render` draws its two panes, and on the area above the prompt it only
+  notes whether Claude Code is on a terminal's main screen and draws nothing; `ui.message` takes the
+  panes' own buttons (Send to Claude, Back to tiles, Export); `turn.complete` runs the fullscreen switch
+  below once it is pending.
+- **Files it reads:** the PNG you name in a command or that Claude passes to its tools.
+- **Files it writes:** only when you press Export, beside the sprite and never over a file that is
+  already there: `.png` (1x, 8x, a sheet, or one per frame), `.gif`, `.aseprite` and `.txt`. Nothing
+  else: no settings, build or instruction files.
+- **Programs it runs:** only to write those image files, since a mod can write only text: on macOS and
+  Linux `/bin/sh -c 'base64 --decode > "$SF_OUT"'` (with `PATH=/usr/bin:/bin`); on Windows
+  `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe` or
+  `C:\Program Files\PowerShell\7\pwsh.exe` running `[IO.File]::WriteAllBytes(...)`. The image is
+  passed on stdin and the target path in `SF_OUT`. If none of them works, the pixels go to your prompt
+  instead.
+- **Slash commands it runs:** `/tui fullscreen`, once, after you have said yes to switching and Claude
+  has called `enter_fullscreen` (the terminal panes take mouse clicks only in that layout).
+- **Your prompt and the conversation:** it reads your prompt box only to add the sprite after what you
+  have already typed, and fills it (Send to Claude, Back to tiles, or an export with no decoder). It
+  does not read the transcript or call any tools itself.
+- **Network:** none. The mod makes no requests; edit links come from the skill's `curl` commands and
+  the connector described above.
+- **Storage:** one flag in the plugin's store: whether it has asked you about fullscreen.
+
 ## Troubleshooting
 
 - **No editor card appears:** cards show in Claude's chat apps (claude.ai on the web and the desktop
@@ -196,8 +227,9 @@ Limits: edit links take PNGs up to 128x128 pixels and 256 colours, the panes up 
 
 ## Develop
 
-`claude plugin validate .`, `claude plugin test .` (the tests drive both panes, the mouse and Save on
-the terminal and desktop surfaces). `hooks/wang.ts` is a port of SpriteForge's `app/engine/wang.js`;
+`claude plugin validate .`, and `claude plugin test .` in the SpriteForge repository's
+`claude-plugins/spriteforge-editor` (the tests drive both panes, the mouse and Send to Claude on the
+terminal and desktop surfaces; they stay out of this published copy). `hooks/wang.ts` is a port of SpriteForge's `app/engine/wang.js`;
 the tile tests check it against sets that engine made.
 
 ## Links

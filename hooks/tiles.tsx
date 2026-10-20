@@ -433,26 +433,26 @@ function strokeTiles(surface: ClientSurface<State>, st: State, ev: ClientPointer
   hit: (x: number, y: number) => { mask: number; i: number } | null) {
   const erase = ev.button === 'right' || ev.button === 'middle', d = st.drag
   if (ev.type === 'down') {
-    const h = hit(mx, my)
+    const ht = hit(mx, my)
     if (erase) {
-      const v = h ? st.tiles[h.mask]![h.i]! : -1
+      const v = ht ? st.tiles[ht.mask]![ht.i]! : -1
       if (v >= 0) surface.setState({ ...st, color: v, note: '' })
       return
     }
-    if (!h) return surface.setState({ ...st, note: st.kind === 'wang' ? 'No tile is drawn here: paint some map cells first.' : '' })
+    if (!ht) return surface.setState({ ...st, note: st.kind === 'wang' ? 'No tile is drawn here: paint some map cells first.' : '' })
   } else if (!d || (mx === d.x && my === d.y)) {
     return
   }
   const base = ev.type === 'down' ? snapshot(st) : st
   const tiles = base.tiles.slice(), copied = new Set<number>()
   line(ev.type === 'move' && d ? d.x : mx, ev.type === 'move' && d ? d.y : my, mx, my, (x, y) => {
-    const h = hit(x, y)
-    if (!h) return
-    if (!copied.has(h.mask)) {
-      copied.add(h.mask)
-      tiles[h.mask] = tiles[h.mask]!.slice()
+    const ht = hit(x, y)
+    if (!ht) return
+    if (!copied.has(ht.mask)) {
+      copied.add(ht.mask)
+      tiles[ht.mask] = tiles[ht.mask]!.slice()
     }
-    tiles[h.mask]![h.i] = st.color
+    tiles[ht.mask]![ht.i] = st.color
   })
   surface.setState({ ...base, tiles, drag: { erase: false, x: mx, y: my }, note: '' })
 }
@@ -624,10 +624,10 @@ function onKey(surface: ClientSurface<State>, k: ClientKeyEvent) {
 
 // The colour a tile shows most, for its button.
 function quadrants(tile: number[], T: number, palette: string[]): (string | undefined)[] {
-  const h = Math.ceil(T / 2)
+  const ht = Math.ceil(T / 2)
   return [[0, 0], [1, 0], [0, 1], [1, 1]].map(([qx, qy]) => {
     const part: number[] = []
-    for (let y = qy! * h; y < Math.min(T, (qy! + 1) * h); y++) for (let x = qx! * h; x < Math.min(T, (qx! + 1) * h); x++) part.push(tile[y * T + x]!)
+    for (let y = qy! * ht; y < Math.min(T, (qy! + 1) * ht); y++) for (let x = qx! * ht; x < Math.min(T, (qx! + 1) * ht); x++) part.push(tile[y * T + x]!)
     // A quadrant mostly transparent shows as empty.
     return part.filter((v) => v >= 0).length * 2 < part.length ? undefined : dominant(part, palette)
   })
@@ -694,9 +694,9 @@ const Tiles: ClientModule<Props, State> = (props, surface) => {
       const iso = projectIso(compose(st, p), W, H)
       let found: { s: number; look: Look; dw: number; dh: number; zoom: number } | null = null
       for (const sv of [p.s, 2 * p.s, 4 * p.s, 8 * p.s]) {
-        const w = Math.ceil(iso.w / sv), h = Math.ceil(iso.h / sv), fz = fit({ w, h, zoom: 0 }, cols, props.rows, boxes), lk = pictureLook(st, iso.w, iso.px, sv, null)
-        found = { s: sv, look: lk, dw: w, dh: h, zoom: fz.half ? 0.5 : fz.z }
-        if ((fz.half ? w <= cols : fz.span >= w) && fz.visible >= fz.total && canvas(lk, w, h, fz, 0, null, CANVAS_BUDGET, { boxes }).bands >= fz.total) break
+        const w = Math.ceil(iso.w / sv), ht = Math.ceil(iso.h / sv), fz = fit({ w, h: ht, zoom: 0 }, cols, props.rows, boxes), lk = pictureLook(st, iso.w, iso.px, sv, null)
+        found = { s: sv, look: lk, dw: w, dh: ht, zoom: fz.half ? 0.5 : fz.z }
+        if ((fz.half ? w <= cols : fz.span >= w) && fz.visible >= fz.total && canvas(lk, w, ht, fz, 0, null, CANVAS_BUDGET, { boxes }).bands >= fz.total) break
       }
       s = found!.s
       isoZoom = found!.zoom

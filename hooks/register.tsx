@@ -15,6 +15,7 @@ import type { DrawDoc, TileDoc } from '../types'
 import { ase, asciiArt, base64, gif, png } from './encode'
 import { GOLD, SITE } from './pixels'
 import { spriteFromPng } from './png'
+import type { EditorPost, ExportMsg } from './shapes'
 import { BASE, GRASS, TILES, deriveTiles, grassBase } from './wang'
 
 const PANE = 'spriteforge-draw'
@@ -71,8 +72,8 @@ function base64Bytes(b64: string): Uint8Array {
   return out
 }
 
-const normHex = (h: unknown): string | null => {
-  const m = /^#?([0-9a-f]{6})$/i.exec(String(h ?? '').trim())
+const normHex = (value: unknown): string | null => {
+  const m = /^#?([0-9a-f]{6})$/i.exec(String(value ?? '').trim())
   return m ? '#' + m[1]!.toLowerCase() : null
 }
 
@@ -114,20 +115,20 @@ async function buildDoc($: EngineInterface, spec: OpenSpec): Promise<DrawDoc> {
   }
   if (spec.grid || spec.frames) {
     const palette = (spec.palette || []).map((c, i) => {
-      const h = normHex(c)
-      if (!h) throw new Error(`palette[${i}] isn't a hex colour like "#a1b2c3".`)
-      return h
+      const hex = normHex(c)
+      if (!hex) throw new Error(`palette[${i}] isn't a hex colour like "#a1b2c3".`)
+      return hex
     })
     if (palette.length > MAX_COLORS) throw new Error(`At most ${MAX_COLORS} colours.`)
     const grids = spec.frames && spec.frames.length ? spec.frames.map((f, i) => checkGrid(f && f.grid, palette.length, `frames[${i}].grid`)) : [checkGrid(spec.grid, palette.length, 'grid')]
     if (grids.length > MAX_FRAMES) throw new Error(`At most ${MAX_FRAMES} frames.`)
-    const h = grids[0]!.length, w = grids[0]![0]!.length
-    if (grids.some((g) => g.length !== h || g[0]!.length !== w)) throw new Error('Every frame must be the same size.')
-    return { rev, name: spec.name || 'sprite', path: null, w, h, palette, frames: grids.map((g) => encodeFrame(g.flat())) }
+    const ht = grids[0]!.length, w = grids[0]![0]!.length
+    if (grids.some((g) => g.length !== ht || g[0]!.length !== w)) throw new Error('Every frame must be the same size.')
+    return { rev, name: spec.name || 'sprite', path: null, w, h: ht, palette, frames: grids.map((g) => encodeFrame(g.flat())) }
   }
-  const w = Math.round(Number(spec.width) || 16), h = Math.round(Number(spec.height) || w)
-  if (w < 1 || h < 1 || w > MAX_SIDE || h > MAX_SIDE) throw new Error(`The canvas can be 1-${MAX_SIDE} pixels on each side.${w > MAX_SIDE || h > MAX_SIDE ? ` ${BIGGER}` : ''}`)
-  return { rev, name: spec.name || 'sprite', path: null, w, h, palette: PICO8.slice(), frames: [encodeFrame(new Array(w * h).fill(-1))] }
+  const w = Math.round(Number(spec.width) || 16), ht = Math.round(Number(spec.height) || w)
+  if (w < 1 || ht < 1 || w > MAX_SIDE || ht > MAX_SIDE) throw new Error(`The canvas can be 1-${MAX_SIDE} pixels on each side.${w > MAX_SIDE || ht > MAX_SIDE ? ` ${BIGGER}` : ''}`)
+  return { rev, name: spec.name || 'sprite', path: null, w, h: ht, palette: PICO8.slice(), frames: [encodeFrame(new Array(w * ht).fill(-1))] }
 }
 
 async function open($: EngineInterface, spec: OpenSpec) {
@@ -151,15 +152,15 @@ function specFrom(e: Record<string, unknown>): OpenSpec {
 
 // Pixels as text for the prompt: letters for up to 62 colours (only those used), "." for
 // transparent; frames one GRID each, one PALETTE after. More colours than letters go as JSON.
-function gridBlock(w: number, h: number, palette: string[], frames: number[][]): string {
+function gridBlock(w: number, ht: number, palette: string[], frames: number[][]): string {
   const used = [...new Set(frames.flat().filter((v) => v >= 0))].sort((a, b) => a - b)
   if (used.length > SYMBOLS.length) {
     const remap = new Map(used.map((v, i) => [v, i]))
-    const art = { palette: used.map((v) => palette[v]), frames: frames.map((f) => ({ grid: Array.from({ length: h }, (_, y) => f.slice(y * w, y * w + w).map((v) => (v < 0 ? -1 : remap.get(v)!))) })) }
+    const art = { palette: used.map((v) => palette[v]), frames: frames.map((f) => ({ grid: Array.from({ length: ht }, (_, y) => f.slice(y * w, y * w + w).map((v) => (v < 0 ? -1 : remap.get(v)!))) })) }
     return `\n\n\`\`\`json\n${JSON.stringify(art)}\n\`\`\`\n`
   }
   const sym = new Map(used.map((v, i) => [v, SYMBOLS[i]!]))
-  const grid = (f: number[]) => Array.from({ length: h }, (_, y) => f.slice(y * w, y * w + w).map((v) => (v < 0 ? '.' : sym.get(v)!)).join('')).join('\n')
+  const grid = (f: number[]) => Array.from({ length: ht }, (_, y) => f.slice(y * w, y * w + w).map((v) => (v < 0 ? '.' : sym.get(v)!)).join('')).join('\n')
   const body = frames.length > 1 ? frames.map((f, i) => `FRAME ${i + 1}\nGRID\n${grid(f)}`).join('\n\n') : `GRID\n${grid(frames[0]!)}`
   const pal = used.map((v) => `${sym.get(v)}=${palette[v]}`).join('\n')
   return `\n\n${body}\n\nPALETTE\n${pal}\n`
@@ -184,17 +185,13 @@ function timingText(n: number, t: Timing): string {
 }
 
 // The saved sprite as text for the prompt.
-export function spriteText(name: string, path: string | null, w: number, h: number, palette: string[], frames: number[][], timing: Timing = {}): string {
-  const head = `Here is "${name}" from the pixel editor (${w}x${h}, ${colourCount(frames)}${frames.length > 1 ? `, ${frames.length} frames` : ''})` +
+export function spriteText(name: string, path: string | null, w: number, ht: number, palette: string[], frames: number[][], timing: Timing = {}): string {
+  const head = `Here is "${name}" from the pixel editor (${w}x${ht}, ${colourCount(frames)}${frames.length > 1 ? `, ${frames.length} frames` : ''})` +
     (path ? `. Write it back to ${path}:` : ':')
-  return head + gridBlock(w, h, palette, frames).replace(/\n$/, '') + timingText(frames.length, timing) + '\n'
+  return head + gridBlock(w, ht, palette, frames).replace(/\n$/, '') + timingText(frames.length, timing) + '\n'
 }
 
 // ── exports ──
-type ExportMsg = {
-  type: 'export'; format: string; frame?: number; w: number; h: number; palette: string[]; frames: string[]; ms: number[]
-  layers?: { name: string; frames: string[] }[] | null
-}
 const FORMATS: Record<string, string> = {
   png: 'a PNG at 1x', png8: 'a PNG at 8x (nearest neighbour)', sheet: 'a PNG sheet of every frame in one row at 1x',
   gif: 'a looping GIF at 8x with these frame times', frames: 'one 8x PNG per frame', ase: 'an Aseprite file', txt: 'a text grid',
@@ -203,30 +200,36 @@ const FORMATS: Record<string, string> = {
 // Binary files go through the system's base64 decoder (a mod writes only text): sh on macOS and
 // Linux, PowerShell on Windows. Each by its full path, with a fixed PATH for sh: a bare name could
 // run a same-named program from the project folder (Windows looks in the working directory first).
-// False when none of them wrote it whole.
+// False when none of them wrote it whole. WRITERS names the same programs as the calls in writeBytes
+// (which spell them out in full, as the directory requires); the tests check against it.
 export const WRITERS = {
   sh: '/bin/sh',
   powershell: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
   pwsh: 'C:\\Program Files\\PowerShell\\7\\pwsh.exe',
 }
 async function writeBytes($: EngineInterface, path: string, bytes: Uint8Array): Promise<boolean> {
-  const ps = '[IO.File]::WriteAllBytes($env:SF_OUT, [Convert]::FromBase64String([Console]::In.ReadToEnd()))'
-  const writers = [
-    [WRITERS.sh, '-c', 'base64 --decode > "$SF_OUT"'],
-    [WRITERS.powershell, '-NoProfile', '-NonInteractive', '-Command', ps],
-    [WRITERS.pwsh, '-NoProfile', '-NonInteractive', '-Command', ps],
-  ]
   const stdin = base64(bytes)
-  for (const argv of writers) {
-    try {
-      const env: Record<string, string> = argv[0] === WRITERS.sh ? { SF_OUT: path, PATH: '/usr/bin:/bin' } : { SF_OUT: path }
-      const r = await $.process.run(argv, { stdin, env, timeoutMs: 30_000 })
-      if (r.exitCode !== 0) continue
-      const st = await $.fs.stat(path)
-      if (st.kind === 'file' && st.size === bytes.length) return true
-    } catch {
-      // the next writer
-    }
+  const whole = async (r: { exitCode: number }) => {
+    if (r.exitCode !== 0) return false
+    const st = await $.fs.stat(path)
+    return st.kind === 'file' && st.size === bytes.length
+  }
+  // Each program and its whole command written out (the directory reads them off the source):
+  // sh decodes stdin into $SF_OUT; PowerShell or pwsh does the same with .NET.
+  try {
+    if (await whole(await $.process.run(['/bin/sh', '-c', 'base64 --decode > "$SF_OUT"'], { stdin, env: { SF_OUT: path, PATH: '/usr/bin:/bin' }, timeoutMs: 30_000 }))) return true
+  } catch {
+    // not macOS or Linux: PowerShell next
+  }
+  try {
+    if (await whole(await $.process.run(['C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', '-NoProfile', '-NonInteractive', '-Command', '[IO.File]::WriteAllBytes($env:SF_OUT, [Convert]::FromBase64String([Console]::In.ReadToEnd()))'], { stdin, env: { SF_OUT: path }, timeoutMs: 30_000 }))) return true
+  } catch {
+    // no Windows PowerShell: pwsh next
+  }
+  try {
+    if (await whole(await $.process.run(['C:\\Program Files\\PowerShell\\7\\pwsh.exe', '-NoProfile', '-NonInteractive', '-Command', '[IO.File]::WriteAllBytes($env:SF_OUT, [Convert]::FromBase64String([Console]::In.ReadToEnd()))'], { stdin, env: { SF_OUT: path }, timeoutMs: 30_000 }))) return true
+  } catch {
+    // none of them: the caller hands the pixels to Claude
   }
   return false
 }
@@ -656,9 +659,11 @@ export const register: Register = (on) => {
       const { Text } = $.ui.resolve(e)
       return <Text>The tile editor needs Claude Code in a terminal or the desktop app.</Text>
     }
-    const { Box, Text, Link, Client } = $.ui.resolve(e)
+    const ui = $.ui.resolve(e)
+    const { Box, Text, Link } = ui
     if (!d) return <Text dimColor>No tileset is open. Run /spriteforge-tiles to start one.</Text>
     const rows = Math.max(8, (e.props.scroll.bodyRows || 30) - TILES_CONTROL_ROWS - (onMainScreen(e) ? 1 : 0))
+    const back = await read($, tileBack)
     return (
       <Box flexDirection="column">
         <Box key="head" columnGap={2}>
@@ -670,7 +675,7 @@ export const register: Register = (on) => {
           </Text>
         </Box>
         {onMainScreen(e) ? <Text key="tui" color={GOLD} wrap="truncate-end">{MAIN_SCREEN_HINT}</Text> : null}
-        <Client key="tiles" module="./tiles.tsx" props={{ doc: d, cols: e.props.bodyColumns, rows, back: await read($, tileBack), surface: e.surface }} width="100%" />
+        <ui.Client module="./tiles.tsx" key="tiles" props={{ doc: d, cols: e.props.bodyColumns, rows, back, surface: e.surface }} width="100%" />
       </Box>
     )
   })
@@ -706,16 +711,16 @@ export const register: Register = (on) => {
   }).catch(() => ({ result: "The pixel editor hit an internal error; try /spriteforge-draw instead.", isError: true as const }))
 
   on('ui.message', { element: 'editor' }, async ($, e, next) => {
-    const data = e.data as { type?: string; w?: number; h?: number; palette?: string[]; frames?: string[] } & Timing | null
+    const data = e.data as EditorPost & Timing | null
     const d = await read($, doc)
     if (!data || !['save', 'export', 'back'].includes(String(data.type)) || !d || !Array.isArray(data.frames) || !Array.isArray(data.palette)) return next(e)
-    const w = Number(data.w), h = Number(data.h)
-    const frames = data.frames.map(decodeFrame).filter((f) => f.length === w * h)
+    const w = Number(data.w), ht = Number(data.h)
+    const frames = data.frames.map(decodeFrame).filter((f) => f.length === w * ht)
     if (!frames.length || frames.length !== data.frames.length) return next(e)
     if (data.type === 'back') {
       // The tile goes back to the tile editor, if the set it came from is still the one open.
       const t = await read($, tileset)
-      if (!d.back || !t || t.rev !== d.back.tilesRev || w !== t.tile || h !== t.tile) {
+      if (!d.back || !t || t.rev !== d.back.tilesRev || w !== t.tile || ht !== t.tile) {
         await update($, notice, (cur) => ({ id: (cur ? cur.id : 0) + 1, text: 'The tileset this tile came from is no longer open: Send to Claude instead.' }))
         return next(e)
       }
@@ -734,7 +739,7 @@ export const register: Register = (on) => {
       await update($, notice, (cur) => ({ id: (cur ? cur.id : 0) + 1, text }))
       return next(e)
     }
-    const text = spriteText(d.name, d.path, w, h, data.palette.map((c) => normHex(c) || '#000000'), frames, { ms: data.ms, tags: data.tags })
+    const text = spriteText(d.name, d.path, w, ht, data.palette.map((c) => normHex(c) || '#000000'), frames, { ms: data.ms, tags: data.tags })
     const draft = await $.prompt.read()
     await $.prompt.fill({ text: draft.text.trim() ? `\n\n${text}` : text, mode: draft.text.trim() ? 'append' : 'replace' })
     // Keep what was saved, so reopening the pane shows the latest pixels.
@@ -749,7 +754,8 @@ export const register: Register = (on) => {
       const { Text } = $.ui.resolve(e)
       return <Text>The pixel editor needs Claude Code in a terminal or the desktop app.</Text>
     }
-    const { Box, Text, Link, Client } = $.ui.resolve(e)
+    const ui = $.ui.resolve(e)
+    const { Box, Text, Link } = ui
     if (!d) return <Text dimColor>No sprite is open. Run /spriteforge-draw to start one.</Text>
     const rows = Math.max(8, (e.props.scroll.bodyRows || 30) - CONTROL_ROWS - (onMainScreen(e) ? 1 : 0))
     const note = await read($, notice)
@@ -764,7 +770,7 @@ export const register: Register = (on) => {
           </Text>
         </Box>
         {onMainScreen(e) ? <Text key="tui" color={GOLD} wrap="truncate-end">{MAIN_SCREEN_HINT}</Text> : null}
-        <Client key="editor" module="./editor.tsx" props={{ doc: d, cols: e.props.bodyColumns, rows, notice: note, surface: e.surface }} width="100%" />
+        <ui.Client module="./editor.tsx" key="editor" props={{ doc: d, cols: e.props.bodyColumns, rows, notice: note, surface: e.surface }} width="100%" />
       </Box>
     )
   })
