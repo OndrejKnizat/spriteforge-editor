@@ -1,8 +1,8 @@
 {
   "name": "spriteforge-editor",
   "displayName": "SpriteForge Editor",
-  "version": "0.7.1",
-  "description": "SpriteForge's free pixel editor and tileset editor inside Claude: hand-edit sprites, animations and Wang tilesets right in the conversation - as interactive cards in Claude's chat apps and as panes in Claude Code. No account needed.",
+  "version": "0.7.2",
+  "description": "SpriteForge's free pixel editor and tileset editor inside Claude: hand-edit sprites, animations and Wang tilesets right in the conversation - as interactive cards in Claude's chat apps, or through an edit link in the browser. No account needed.",
   "author": { "name": "SpriteForge", "email": "support@spriteforge.tech", "url": "https://www.spriteforge.tech" },
   "homepage": "https://www.spriteforge.tech",
   "license": "MIT",
@@ -11,6 +11,5 @@
   "documentationUrl": "https://github.com/OndrejKnizat/spriteforge-editor#readme",
   "supportUrl": "mailto:support@spriteforge.tech",
   "privacyPolicyUrl": "https://www.spriteforge.tech/privacy.html",
-  "termsOfServiceUrl": "https://www.spriteforge.tech/terms.html",
-  "types": "./types/index.d.ts"
+  "termsOfServiceUrl": "https://www.spriteforge.tech/terms.html"
 }

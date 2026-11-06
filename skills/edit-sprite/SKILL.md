@@ -6,41 +6,12 @@ description: Open pixel art, a game sprite (PNG) or a Wang autotile tileset in S
 # Hand-edit sprites and tilesets with SpriteForge
 
 SpriteForge's editor is a full pixel editor: brush, eraser, fill, line and shapes, selection, palette
-tools, layers and animation frames, with Aseprite-style keys. It reaches the user three ways:
+tools, layers and animation frames, with Aseprite-style keys. It reaches the user two ways:
 
-- **In Claude Code (terminal or the desktop app's Code tab):** this plugin's panes open beside the
-  conversation, nothing uploaded - see "Panes in Claude Code" below.
 - **In the browser:** an **edit link** opens one sprite in SpriteForge's Edit studio with no sign-in,
-  and every stroke saves to the link automatically.
+  and every stroke saves to the link automatically - see "Edit links" below.
 - **In Claude's chat apps (claude.ai on the web and desktop):** the editor appears in the conversation
   as a card - see "Without a shell" below.
-
-## Panes in Claude Code
-
-When the `open_pixel_editor` and `open_tile_editor` tools are available, prefer them for quick hand
-edits: they open a pane beside the conversation on the user's machine, read the PNG locally and send
-nothing anywhere.
-
-- `open_pixel_editor` - a sprite or animation: `path` to a PNG (up to 64x64), or `palette` + `grid` /
-  `frames` you drafted, or `width` + `height` for a blank canvas. The pane has the tools of
-  SpriteForge's Edit studio: brushes, shade, shapes, selection (wand, lasso, scale, rotate), palette
-  tools, canvas resize and outline tools, layers, frames with timing, tags, onion skin and playback.
-  Its **Export** tab writes PNG, GIF, sheet, per-frame PNGs or Aseprite files beside the sprite itself;
-  if the user did that, the file is already there.
-- `open_tile_editor` - a tileset, SpriteForge's tileset window: `kind` wang (default; `wall` and `iso`
-  preview it as walls or isometric) or platformer. A Wang set: `path` to a tileset PNG (SpriteForge's
-  4x4 sheet or 16x1 strip, or a square texture to derive one from), `palette` + `tiles` (16 grids, tile
-  i drawn where the map cells at its corners are painted, NW=1 NE=2 SW=4 SE=8) or `palette` + `base`,
-  or `size`. A platformer set: `path` to its 7x7 sheet, `palette` + `tiles` (49 grids in SpriteForge's
-  order), or `size` for a blank one.
-- Both return at once. When the user clicks **Send to Claude**, the result arrives in their next message
-  as a GRID + PALETTE block (one letter per pixel, "." transparent; an animation also lists its frame
-  times and tags); write it back to the file if they ask (PNG encoding is up to you - a short script
-  with your usual tools). A message starting "Write ... as ..." is an export the pane couldn't write
-  on this machine: write that file.
-- If the tool reports that no surface can show the pane (Claude Code on the web, the phone apps), use an
-  edit link instead.
-- For bigger sprites (up to 128x128) or the full Edit studio in the browser, use an edit link.
 
 ## Edit links (with a shell and the file on disk)
 

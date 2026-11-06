@@ -6,7 +6,7 @@
     {
       "name": "spriteforge-editor",
       "source": "./",
-      "description": "SpriteForge's free pixel editor and tileset editor inside Claude: hand-edit sprites, animations and Wang tilesets right in the conversation - as interactive cards in Claude's chat apps and as panes in Claude Code. No account needed."
+      "description": "SpriteForge's free pixel editor and tileset editor inside Claude: hand-edit sprites, animations and Wang tilesets right in the conversation - as interactive cards in Claude's chat apps, or through an edit link in the browser. No account needed."
     }
   ]
 }
